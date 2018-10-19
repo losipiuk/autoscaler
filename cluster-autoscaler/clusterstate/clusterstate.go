@@ -53,6 +53,9 @@ const (
 
 	// NodeGroupBackoffResetTimeout is the time after last failed scale-up when the backoff duration is reset.
 	NodeGroupBackoffResetTimeout = 3 * time.Hour
+
+	// cleanupNodeDeleteRequestedTime it time after we are cleaning up entries from nodeDeleteRequested map.
+	cleanupNodeDeleteRequestedTime = 15 * time.Minute
 )
 
 // ScaleUpRequest contains information about the requested node group scale up.
@@ -129,6 +132,7 @@ type ClusterStateRegistry struct {
 	lastStatus              *api.ClusterAutoscalerStatus
 	lastScaleDownUpdateTime time.Time
 	logRecorder             *utils.LogEventRecorder
+	nodeDeleteRequested     map[string]time.Time
 }
 
 // NewClusterStateRegistry creates new ClusterStateRegistry.
@@ -151,6 +155,7 @@ func NewClusterStateRegistry(cloudProvider cloudprovider.CloudProvider, config C
 		nodeGroupBackoffInfo:    backoff,
 		lastStatus:              emptyStatus,
 		logRecorder:             logRecorder,
+		nodeDeleteRequested:     make(map[string]time.Time),
 	}
 }
 
@@ -290,6 +295,15 @@ func (csr *ClusterStateRegistry) Recalculate() {
 	csr.Lock()
 	defer csr.Unlock()
 	csr.updateAcceptableRanges(targetSizes)
+}
+
+// Cleanup cleans up internal structures to avoid memory leaks. Should be called periodically.
+func (csr *ClusterStateRegistry) Cleanup(currentTime time.Time) {
+	for nodeName, requestTime := range csr.nodeDeleteRequested {
+		if requestTime.Add(cleanupNodeDeleteRequestedTime).Before(currentTime) {
+			delete(csr.nodeDeleteRequested, nodeName)
+		}
+	}
 }
 
 // getTargetSizes gets target sizes of node groups.
@@ -934,4 +948,20 @@ func (csr *ClusterStateRegistry) GetClusterSize() (currentSize, targetSize int) 
 	}
 	currentSize = csr.totalReadiness.Registered - csr.totalReadiness.NotStarted - csr.totalReadiness.LongNotStarted
 	return currentSize, targetSize
+}
+
+// RegisterDeleteNodeRequested stores information that we requested node with given
+// name to be deleted.
+func (csr *ClusterStateRegistry) RegisterDeleteNodeRequested(nodeName string, currentTime time.Time) {
+	csr.Lock()
+	defer csr.Unlock()
+	csr.nodeDeleteRequested[nodeName] = currentTime
+}
+
+// WasDeleteNodeRequested checks if we requested node with given name to be deleted.
+func (csr *ClusterStateRegistry) WasDeleteNodeRequested(nodeName string) bool {
+	csr.Lock()
+	defer csr.Unlock()
+	_, found := csr.nodeDeleteRequested[nodeName]
+	return found
 }
