@@ -34,6 +34,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/utils/tpu"
 
 	apiv1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/autoscaler/cluster-autoscaler/processors/status"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/backoff"
@@ -192,12 +193,16 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 			return nil
 		}
 	}
+
 	if !a.clusterStateRegistry.IsClusterHealthy() {
 		klog.Warning("Cluster is not ready for autoscaling")
 		scaleDown.CleanUpUnneededNodes()
 		autoscalingContext.LogRecorder.Eventf(apiv1.EventTypeWarning, "ClusterUnhealthy", "Cluster is unhealthy")
 		return nil
 	}
+
+	// See how are the scale-ups progressing and if we should react to any quota/stockout errors
+	a.handleQuoteAndStockoutErrors(currentTime)
 
 	// Check if there has been a constant difference between the number of nodes in k8s and
 	// the number of nodes on the cloud provider side.
@@ -396,6 +401,83 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 		}
 	}
 	return nil
+}
+
+func (a *StaticAutoscaler) handleQuoteAndStockoutErrors(currentTime time.Time) {
+	cloudProviderNodeInstances := a.clusterStateRegistry.GetCloudProviderNodeInstances()
+
+	nodeGroups := a.CloudProvider.NodeGroups()
+	for _, nodeGroup := range nodeGroups {
+		instances, found := cloudProviderNodeInstances[nodeGroup.Id()]
+		if !found {
+			continue
+		}
+
+		outOfResourcesInstanceNamesByErrorCode := make(map[string][]string)
+		for _, instance := range instances {
+			if instance.Status != nil && instance.Status.State == cloudprovider.STATE_BEING_CREATED && instance.Status.ErrorInfo != nil {
+				errorInfo := instance.Status.ErrorInfo
+				if errorInfo.ErrorClass == cloudprovider.ERROR_OUT_OF_RESOURCES {
+					outOfResourcesInstanceNamesByErrorCode[errorInfo.ErrorCode] = append(outOfResourcesInstanceNamesByErrorCode[errorInfo.ErrorCode], instance.Id)
+				}
+			}
+		}
+
+		for errorCode, instanceNames := range outOfResourcesInstanceNamesByErrorCode {
+			klog.Infof("Failed adding %v nodes to group %v due to %v", len(instanceNames), nodeGroup.Id(), errorCode)
+			a.LogRecorder.Eventf(
+				apiv1.EventTypeWarning,
+				"ScaleUpFailed",
+				"Failed adding %v nodes to group %v due to %v",
+				len(instanceNames),
+				nodeGroup.Id(),
+				errorCode)
+
+			if a.deleteErroredNodesBeingCreated(nodeGroup, instanceNames, currentTime) {
+				a.clusterStateRegistry.RegisterFailedScaleUp(nodeGroup, metrics.FailedScaleUpReason(errorCode), currentTime)
+			}
+		}
+	}
+}
+
+func (a *StaticAutoscaler) deleteErroredNodesBeingCreated(nodeGroup cloudprovider.NodeGroup, nodeNames []string, currentTime time.Time) bool {
+	nodes := make([]*apiv1.Node, 0, len(nodeNames))
+	for _, nodeName := range nodeNames {
+		if a.clusterStateRegistry.WasDeleteNodeRequested(nodeName) {
+			continue
+		}
+		// create dummy node name
+		node := &apiv1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+			},
+			Spec: apiv1.NodeSpec{
+				ProviderID: nodeName,
+			},
+		}
+		nodes = append(nodes, node)
+	}
+
+	if len(nodes) == 0 {
+		return false
+	}
+
+	// Issue a delete
+	err := nodeGroup.DeleteNodes(nodes)
+	if err != nil {
+		klog.Warningf("Error while trying to delete nodes from %v: %v", nodeGroup.Id(), err)
+		return false
+	}
+
+	// Remember the fact that we deleted the nodes
+	// Question: Maybe for safety we should mark it in the loop above.
+	for _, node := range nodes {
+		a.clusterStateRegistry.RegisterDeleteNodeRequested(node.Name, currentTime)
+	}
+
+	// Decrease the scale up request by the number of deleted nodes
+	a.clusterStateRegistry.RegisterOrUpdateScaleUp(nodeGroup, -len(nodes), currentTime)
+	return true
 }
 
 // don't consider pods newer than newPodScaleUpDelay seconds old as unschedulable
