@@ -449,7 +449,8 @@ func (m *gkeManagerImpl) GetMigNodes(mig gce.Mig) ([]string, error) {
 		return []string{}, err
 	}
 	result := make([]string, 0)
-	for _, ref := range instances {
+	for _, instance := range instances {
+		ref := instance.GceRef
 		result = append(result, fmt.Sprintf("gce://%s/%s/%s", ref.Project, ref.Zone, ref.Name))
 	}
 	return result, nil

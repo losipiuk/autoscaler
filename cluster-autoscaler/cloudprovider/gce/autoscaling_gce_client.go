@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strings"
 	"time"
 
 	gce "google.golang.org/api/compute/v1"
@@ -41,7 +42,7 @@ type AutoscalingGceClient interface {
 	FetchMachineTypes(zone string) ([]*gce.MachineType, error)
 	FetchMigTargetSize(GceRef) (int64, error)
 	FetchMigBasename(GceRef) (string, error)
-	FetchMigInstances(GceRef) ([]GceRef, error)
+	FetchMigInstances(GceRef) ([]InstanceInfo, error)
 	FetchMigTemplate(GceRef) (*gce.InstanceTemplate, error)
 	FetchMigsWithName(zone string, filter *regexp.Regexp) ([]string, error)
 	FetchZones(region string) ([]string, error)
@@ -166,22 +167,67 @@ func (client *autoscalingGceClientV1) DeleteInstances(migRef GceRef, instances [
 	return client.waitForOp(op, migRef.Project, migRef.Zone)
 }
 
-func (client *autoscalingGceClientV1) FetchMigInstances(migRef GceRef) ([]GceRef, error) {
-	registerRequest("instance_group_managers", "list_managed_instances")
+func (client *autoscalingGceClientV1) FetchMigInstances(migRef GceRef) ([]InstanceInfo, error) {
 	instances, err := client.gceService.InstanceGroupManagers.ListManagedInstances(migRef.Project, migRef.Zone, migRef.Name).Do()
 	if err != nil {
 		klog.V(4).Infof("Failed MIG info request for %s %s %s: %v", migRef.Project, migRef.Zone, migRef.Name, err)
 		return nil, err
 	}
-	refs := []GceRef{}
-	for _, i := range instances.ManagedInstances {
-		ref, err := ParseInstanceUrlRef(i.Instance)
+	infos := []InstanceInfo{}
+	for _, instance := range instances.ManagedInstances {
+		ref, err := ParseInstanceUrlRef(instance.Instance)
 		if err != nil {
 			return nil, err
 		}
-		refs = append(refs, ref)
+
+		info := InstanceInfo{}
+		info.GceRef = ref
+
+		switch instance.CurrentAction {
+		case "CREATING":
+			fallthrough
+		case "RECREATING":
+			fallthrough
+		case "CREATING_WITHOUT_RETRIES":
+			info.Status = BEING_CREATED
+		case "ABANDONING":
+			fallthrough
+		case "DELETING":
+			info.Status = BEING_DELETED
+		default:
+			info.Status = RUNNING
+		}
+
+		info.ErrorClass = NONE
+		if info.Status == BEING_CREATED && instance.LastAttempt != nil && instance.LastAttempt.Errors != nil && instance.LastAttempt.Errors.Errors != nil {
+			for _, instanceError := range instance.LastAttempt.Errors.Errors {
+				if isStockoutErrorCode(instanceError.Code) {
+					info.ErrorClass = STOCKOUT
+				} else if isQuotaExceededErrorCoce(instanceError.Code) {
+					info.ErrorClass = QUOTA_EXCEEDED
+				} else if info.ErrorClass == NONE {
+					info.ErrorClass = OTHER
+				}
+				if instanceError.Message != "" {
+					if info.ErrorMessage != "" {
+						info.ErrorMessage += "; "
+					}
+					info.ErrorMessage += instanceError.Message
+				}
+			}
+		}
+
+		infos = append(infos, info)
 	}
-	return refs, nil
+	return infos, nil
+}
+
+func isStockoutErrorCode(errorCode string) bool {
+	return errorCode == "RESOURCE_POOL_EXHAUSTED" || errorCode == "ZONE_RESOURCE_POOL_EXHAUSTED" || errorCode == "ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS"
+}
+
+func isQuotaExceededErrorCoce(errorCode string) bool {
+	return strings.Contains(errorCode, "QUOTA")
 }
 
 func (client *autoscalingGceClientV1) FetchZones(region string) ([]string, error) {
