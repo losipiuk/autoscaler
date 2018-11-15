@@ -65,7 +65,7 @@ type GceManager interface {
 	// GetMigs returns list of registered MIGs.
 	GetMigs() []*MigInformation
 	// GetMigNodes returns mig nodes.
-	GetMigNodes(mig Mig) ([]string, error)
+	GetMigNodes(mig Mig) ([]InstanceInfo, error)
 	// GetMigForInstance returns MIG to which the given instance belongs.
 	GetMigForInstance(instance *GceRef) (Mig, error)
 	// GetMigTemplateNode returns a template node for MIG.
@@ -251,17 +251,8 @@ func (m *gceManagerImpl) GetMigForInstance(instance *GceRef) (Mig, error) {
 }
 
 // GetMigNodes returns mig nodes.
-func (m *gceManagerImpl) GetMigNodes(mig Mig) ([]string, error) {
-	instances, err := m.GceService.FetchMigInstances(mig.GceRef())
-	if err != nil {
-		return []string{}, err
-	}
-	result := make([]string, 0)
-	for _, instance := range instances {
-		ref := instance.GceRef
-		result = append(result, fmt.Sprintf("gce://%s/%s/%s", ref.Project, ref.Zone, ref.Name))
-	}
-	return result, nil
+func (m *gceManagerImpl) GetMigNodes(mig Mig) ([]InstanceInfo, error) {
+	return m.GceService.FetchMigInstances(mig.GceRef())
 }
 
 // Refresh triggers refresh of cached resources.
