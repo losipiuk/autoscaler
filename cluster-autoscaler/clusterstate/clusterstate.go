@@ -117,22 +117,23 @@ type UnregisteredNode struct {
 // ClusterStateRegistry is a structure to keep track the current state of the cluster.
 type ClusterStateRegistry struct {
 	sync.Mutex
-	config                  ClusterStateRegistryConfig
-	scaleUpRequests         map[string]*ScaleUpRequest // nodeGroupName -> ScaleUpRequest
-	scaleDownRequests       []*ScaleDownRequest
-	nodes                   []*apiv1.Node
-	cloudProvider           cloudprovider.CloudProvider
-	perNodeGroupReadiness   map[string]Readiness
-	totalReadiness          Readiness
-	acceptableRanges        map[string]AcceptableRange
-	incorrectNodeGroupSizes map[string]IncorrectNodeGroupSize
-	unregisteredNodes       map[string]UnregisteredNode
-	candidatesForScaleDown  map[string][]string
-	nodeGroupBackoffInfo    backoff.Backoff
-	lastStatus              *api.ClusterAutoscalerStatus
-	lastScaleDownUpdateTime time.Time
-	logRecorder             *utils.LogEventRecorder
-	nodeDeleteRequested     map[string]time.Time
+	config                     ClusterStateRegistryConfig
+	scaleUpRequests            map[string]*ScaleUpRequest // nodeGroupName -> ScaleUpRequest
+	scaleDownRequests          []*ScaleDownRequest
+	nodes                      []*apiv1.Node
+	cloudProvider              cloudprovider.CloudProvider
+	perNodeGroupReadiness      map[string]Readiness
+	totalReadiness             Readiness
+	acceptableRanges           map[string]AcceptableRange
+	incorrectNodeGroupSizes    map[string]IncorrectNodeGroupSize
+	unregisteredNodes          map[string]UnregisteredNode
+	candidatesForScaleDown     map[string][]string
+	nodeGroupBackoffInfo       backoff.Backoff
+	lastStatus                 *api.ClusterAutoscalerStatus
+	lastScaleDownUpdateTime    time.Time
+	logRecorder                *utils.LogEventRecorder
+	nodeDeleteRequested        map[string]time.Time
+	cloudProviderNodeInstances map[string][]cloudprovider.Instance
 }
 
 // NewClusterStateRegistry creates new ClusterStateRegistry.
@@ -262,15 +263,18 @@ func (csr *ClusterStateRegistry) UpdateNodes(nodes []*apiv1.Node, currentTime ti
 	if err != nil {
 		return err
 	}
-	notRegistered, err := getNotRegisteredNodes(nodes, csr.cloudProvider, currentTime)
+
+	cloudProviderNodeInstances, err := getCloudProviderNodeInstances(csr.cloudProvider)
 	if err != nil {
 		return err
 	}
+	notRegistered := getNotRegisteredNodes(nodes, cloudProviderNodeInstances, currentTime)
 
 	csr.Lock()
 	defer csr.Unlock()
 
 	csr.nodes = nodes
+	csr.cloudProviderNodeInstances = cloudProviderNodeInstances
 
 	csr.updateUnregisteredNodes(notRegistered)
 	csr.updateReadinessStats(currentTime)
@@ -906,27 +910,37 @@ func (csr *ClusterStateRegistry) GetUpcomingNodes() map[string]int {
 	return result
 }
 
+// getCloudProviderNodeInstances reterns map keyed on node group id where value is list of node instances
+// as returned by NodeGroup.Nodes().
+func getCloudProviderNodeInstances(cloudProvider cloudprovider.CloudProvider) (map[string][]cloudprovider.Instance, error) {
+	allInstances := make(map[string][]cloudprovider.Instance)
+	for _, nodeGroup := range cloudProvider.NodeGroups() {
+		nodeGroupInstances, err := nodeGroup.Nodes()
+		if err != nil {
+			return nil, err
+		}
+		allInstances[nodeGroup.Id()] = nodeGroupInstances
+	}
+	return allInstances, nil
+}
+
 // Calculates which of the existing cloud provider nodes are not registered in Kubernetes.
-func getNotRegisteredNodes(allNodes []*apiv1.Node, cloudProvider cloudprovider.CloudProvider, time time.Time) ([]UnregisteredNode, error) {
+func getNotRegisteredNodes(allNodes []*apiv1.Node, cloudProviderNodeInstances map[string][]cloudprovider.Instance, time time.Time) []UnregisteredNode {
 	registered := sets.NewString()
 	for _, node := range allNodes {
 		registered.Insert(node.Spec.ProviderID)
 	}
 	notRegistered := make([]UnregisteredNode, 0)
-	for _, nodeGroup := range cloudProvider.NodeGroups() {
-		nodes, err := nodeGroup.Nodes()
-		if err != nil {
-			return []UnregisteredNode{}, err
-		}
-		for _, node := range nodes {
-			if !registered.Has(node.Id) {
+	for _, instances := range cloudProviderNodeInstances {
+		for _, instance := range instances {
+			if !registered.Has(instance.Id) {
 				notRegistered = append(notRegistered, UnregisteredNode{
 					Node: &apiv1.Node{
 						ObjectMeta: metav1.ObjectMeta{
-							Name: node.Id,
+							Name: instance.Id,
 						},
 						Spec: apiv1.NodeSpec{
-							ProviderID: node.Id,
+							ProviderID: instance.Id,
 						},
 					},
 					UnregisteredSince: time,
@@ -934,7 +948,7 @@ func getNotRegisteredNodes(allNodes []*apiv1.Node, cloudProvider cloudprovider.C
 			}
 		}
 	}
-	return notRegistered, nil
+	return notRegistered
 }
 
 // GetClusterSize calculates and returns cluster's current size and target size. The current size is the
@@ -964,4 +978,13 @@ func (csr *ClusterStateRegistry) WasDeleteNodeRequested(nodeName string) bool {
 	defer csr.Unlock()
 	_, found := csr.nodeDeleteRequested[nodeName]
 	return found
+}
+
+// GetCloudProviderNodeInstances returns map keyed on node group id where values are lists of node instances
+// as returned by NodeGroup.Nodes() method.
+// The returned map is updated by ClusterStateRegistry.UpdateNodes() method.
+func (csr *ClusterStateRegistry) GetCloudProviderNodeInstances() map[string][]cloudprovider.Instance {
+	csr.Lock()
+	defer csr.Unlock()
+	return csr.cloudProviderNodeInstances
 }
