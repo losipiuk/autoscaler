@@ -329,16 +329,47 @@ func (mig *gceMig) Debug() string {
 
 // Nodes returns a list of all nodes that belong to this node group.
 func (mig *gceMig) Nodes() ([]cloudprovider.Instance, error) {
-	instanceNames, err := mig.gceManager.GetMigNodes(mig)
+	instanceInfos, err := mig.gceManager.GetMigNodes(mig)
 	if err != nil {
 		return nil, err
 	}
-	instances := make([]cloudprovider.Instance, 0, len(instanceNames))
-	for _, instanceName := range instanceNames {
-		instances = append(instances, cloudprovider.Instance{Id: instanceName})
+	instances := make([]cloudprovider.Instance, 0, len(instanceInfos))
+	for _, instanceInfo := range instanceInfos {
+		instance := cloudprovider.Instance{
+			Id: instanceInfo.GceRef.ToProviderId(),
+		}
+		instance.Status = &cloudprovider.InstanceStatus{}
+
+		switch instanceInfo.Status {
+
+		case InstanceRunning:
+			instance.Status.State = cloudprovider.InstanceRunning
+
+		case InstanceCreating:
+			instance.Status.State = cloudprovider.InstanceCreating
+			if instanceInfo.ErrorInfo != nil {
+				errorInfo := &cloudprovider.InstanceErrorInfo{}
+				switch instanceInfo.ErrorInfo.ErrorClass {
+				case StockoutErrorClass:
+					errorInfo.ErrorClass = cloudprovider.OutOfResourcesErrorClass
+					errorInfo.ErrorCode = "STOCKOUT"
+				case QuotaExceededErrorClass:
+					errorInfo.ErrorClass = cloudprovider.OutOfResourcesErrorClass
+					errorInfo.ErrorCode = "QUOTA_EXCEEDED"
+				default:
+					errorInfo.ErrorClass = cloudprovider.OtherErrorClass
+				}
+				errorInfo.ErrorMessage = instanceInfo.ErrorInfo.ErrorMessage
+				instance.Status.ErrorInfo = errorInfo
+			}
+
+		case InstanceDeleting:
+			instance.Status.State = cloudprovider.InstanceDeleting
+		}
+
+		instances = append(instances, instance)
 	}
 	return instances, nil
-
 }
 
 // Exist checks if the node group really exists on the cloud provider side.
