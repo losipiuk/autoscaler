@@ -415,9 +415,9 @@ func (a *StaticAutoscaler) handleQuoteAndStockoutErrors(currentTime time.Time) {
 
 		outOfResourcesInstanceNamesByErrorCode := make(map[string][]string)
 		for _, instance := range instances {
-			if instance.Status != nil && instance.Status.State == cloudprovider.STATE_BEING_CREATED && instance.Status.ErrorInfo != nil {
+			if instance.Status != nil && instance.Status.State == cloudprovider.StateCreating && instance.Status.ErrorInfo != nil {
 				errorInfo := instance.Status.ErrorInfo
-				if errorInfo.ErrorClass == cloudprovider.ERROR_OUT_OF_RESOURCES {
+				if errorInfo.ErrorClass == cloudprovider.ErrorOutOfResources {
 					outOfResourcesInstanceNamesByErrorCode[errorInfo.ErrorCode] = append(outOfResourcesInstanceNamesByErrorCode[errorInfo.ErrorCode], instance.Id)
 				}
 			}

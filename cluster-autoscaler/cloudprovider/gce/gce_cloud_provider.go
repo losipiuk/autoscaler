@@ -156,6 +156,56 @@ type gceMig struct {
 	maxSize    int
 }
 
+// InstanceStatus represents status of instance. It collapses more verbose list of statuses from
+// GCE to just three values (running, being created, being deleted)
+type InstanceStatus uint64
+
+const (
+	// InstanceRunning tells that instance is up and running
+	InstanceRunning InstanceStatus = 1
+
+	// InstanceCreating tells that instance is being created
+	InstanceCreating InstanceStatus = 2
+
+	// InstanceDeleting tells that instance is being deleted
+	InstanceDeleting InstanceStatus = 3
+)
+
+// InstanceErrorClass represents error class for instance being created.
+type InstanceErrorClass uint64
+
+const (
+	// StockoutErrorClass means that it was not possible to create instance because of stockout
+	StockoutErrorClass InstanceErrorClass = 1
+
+	// QuotaExceededErrorClass means that it was not possible to create instance because quota was exceeded
+	QuotaExceededErrorClass InstanceErrorClass = 2
+
+	// OtherErrorClass means that it was not possible to create instance because of other error
+	OtherErrorClass InstanceErrorClass = 3
+)
+
+// InstanceErrorInfo captures details of error on instance being created
+type InstanceErrorInfo struct {
+	// ErrorClass represents class of an error
+	ErrorClass InstanceErrorClass
+
+	// ErrorMessage is human readable error description
+	ErrorMessage string
+}
+
+// InstanceInfo represents basic information about GCE instance
+type InstanceInfo struct {
+	// Instance reference
+	GceRef GceRef
+
+	// Status of instance
+	Status InstanceStatus
+
+	// ErrorInfo is not nil if an error occurred on instance being created
+	ErrorInfo *InstanceErrorInfo
+}
+
 // GceRef returns Mig's GceRef
 func (mig *gceMig) GceRef() GceRef {
 	return mig.gceRef
