@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2017-12-01/compute"
-	"github.com/golang/glog"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"k8s.io/klog"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -75,8 +75,8 @@ func (scaleSet *ScaleSet) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (scaleSet *ScaleSet) Create() error {
-	return cloudprovider.ErrAlreadyExist
+func (scaleSet *ScaleSet) Create() (cloudprovider.NodeGroup, error) {
+	return nil, cloudprovider.ErrAlreadyExist
 }
 
 // Delete deletes the node group on the cloud provider side.
@@ -116,12 +116,12 @@ func (scaleSet *ScaleSet) getCurSize() (int64, error) {
 		return scaleSet.curSize, nil
 	}
 
-	glog.V(5).Infof("Get scale set size for %q", scaleSet.Name)
+	klog.V(5).Infof("Get scale set size for %q", scaleSet.Name)
 	set, err := scaleSet.getVMSSInfo()
 	if err != nil {
 		return -1, err
 	}
-	glog.V(5).Infof("Getting scale set (%q) capacity: %d\n", scaleSet.Name, *set.Sku.Capacity)
+	klog.V(5).Infof("Getting scale set (%q) capacity: %d\n", scaleSet.Name, *set.Sku.Capacity)
 
 	scaleSet.curSize = *set.Sku.Capacity
 	scaleSet.lastRefresh = time.Now()
@@ -150,7 +150,7 @@ func (scaleSet *ScaleSet) SetScaleSetSize(size int64) error {
 	defer updateCancel()
 	_, err = scaleSet.manager.azClient.virtualMachineScaleSetsClient.CreateOrUpdate(updateCtx, resourceGroup, scaleSet.Name, op)
 	if err != nil {
-		glog.Errorf("virtualMachineScaleSetsClient.CreateOrUpdate for scale set %q failed: %v", scaleSet.Name, err)
+		klog.Errorf("virtualMachineScaleSetsClient.CreateOrUpdate for scale set %q failed: %v", scaleSet.Name, err)
 		return err
 	}
 
@@ -196,7 +196,7 @@ func (scaleSet *ScaleSet) GetScaleSetVms() ([]compute.VirtualMachineScaleSetVM, 
 	resourceGroup := scaleSet.manager.config.ResourceGroup
 	result, err := scaleSet.manager.azClient.virtualMachineScaleSetVMsClient.List(ctx, resourceGroup, scaleSet.Name, "", "", "")
 	if err != nil {
-		glog.Errorf("VirtualMachineScaleSetVMsClient.List failed for %s: %v", scaleSet.Name, err)
+		klog.Errorf("VirtualMachineScaleSetVMsClient.List failed for %s: %v", scaleSet.Name, err)
 		return nil, err
 	}
 
@@ -213,12 +213,12 @@ func (scaleSet *ScaleSet) GetScaleSetVms() ([]compute.VirtualMachineScaleSetVM, 
 		if err != nil {
 			exists, realErr := checkResourceExistsFromError(err)
 			if realErr != nil {
-				glog.Errorf("Failed to get VirtualMachineScaleSetVM by (%s,%s), error: %v", scaleSet.Name, instanceID, err)
+				klog.Errorf("Failed to get VirtualMachineScaleSetVM by (%s,%s), error: %v", scaleSet.Name, instanceID, err)
 				return nil, realErr
 			}
 
 			if !exists {
-				glog.Warningf("Couldn't find VirtualMachineScaleSetVM by (%s,%s), assuming it has been removed", scaleSet.Name, instanceID)
+				klog.Warningf("Couldn't find VirtualMachineScaleSetVM by (%s,%s), assuming it has been removed", scaleSet.Name, instanceID)
 				continue
 			}
 		}
@@ -259,7 +259,7 @@ func (scaleSet *ScaleSet) DecreaseTargetSize(delta int) error {
 
 // Belongs returns true if the given node belongs to the NodeGroup.
 func (scaleSet *ScaleSet) Belongs(node *apiv1.Node) (bool, error) {
-	glog.V(6).Infof("Check if node belongs to this scale set: scaleset:%v, node:%v\n", scaleSet, node)
+	klog.V(6).Infof("Check if node belongs to this scale set: scaleset:%v, node:%v\n", scaleSet, node)
 
 	ref := &azureRef{
 		Name: node.Spec.ProviderID,
@@ -284,7 +284,7 @@ func (scaleSet *ScaleSet) DeleteInstances(instances []*azureRef) error {
 		return nil
 	}
 
-	glog.V(3).Infof("Deleting vmss instances %q", instances)
+	klog.V(3).Infof("Deleting vmss instances %q", instances)
 
 	commonAsg, err := scaleSet.manager.GetAsgForInstance(instances[0])
 	if err != nil {
@@ -304,7 +304,7 @@ func (scaleSet *ScaleSet) DeleteInstances(instances []*azureRef) error {
 
 		instanceID, err := getLastSegment(instance.Name)
 		if err != nil {
-			glog.Errorf("getLastSegment failed with error: %v", err)
+			klog.Errorf("getLastSegment failed with error: %v", err)
 			return err
 		}
 
@@ -323,7 +323,7 @@ func (scaleSet *ScaleSet) DeleteInstances(instances []*azureRef) error {
 
 // DeleteNodes deletes the nodes from the group.
 func (scaleSet *ScaleSet) DeleteNodes(nodes []*apiv1.Node) error {
-	glog.V(8).Infof("Delete nodes requested: %q\n", nodes)
+	klog.V(8).Infof("Delete nodes requested: %q\n", nodes)
 	size, err := scaleSet.GetScaleSetSize()
 	if err != nil {
 		return err
@@ -446,20 +446,20 @@ func (scaleSet *ScaleSet) TemplateNodeInfo() (*schedulercache.NodeInfo, error) {
 }
 
 // Nodes returns a list of all nodes that belong to this node group.
-func (scaleSet *ScaleSet) Nodes() ([]string, error) {
+func (scaleSet *ScaleSet) Nodes() ([]cloudprovider.Instance, error) {
 	vms, err := scaleSet.GetScaleSetVms()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]string, 0, len(vms))
+	instances := make([]cloudprovider.Instance, 0, len(vms))
 	for i := range vms {
 		if len(*vms[i].ID) == 0 {
 			continue
 		}
 		name := "azure://" + *vms[i].ID
-		result = append(result, name)
+		instances = append(instances, cloudprovider.Instance{Id: name})
 	}
 
-	return result, nil
+	return instances, nil
 }

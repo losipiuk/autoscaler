@@ -1,24 +1,5 @@
-commit eac9c4ff5711158eaca899a58d1293e39cbd040e (origin/master, origin/HEAD)
-Merge: c855accaec 86e152dc3f
-Author: Kubernetes Submit Queue <k8s-merge-robot@users.noreply.github.com>
-Date:   Thu Jun 14 05:09:04 2018 -0700
+commit 416974b8346bb1c219efe871c18a9f29de4fad2d (origin/master, origin/HEAD)
+Author: Anago GCB <nobody@k8s.io>
+Date:   Mon Nov 26 14:16:47 2018 +0000
 
-    Merge pull request #65070 from davidz627/fix/externalProvisionerClusterRole
-    
-    Automatic merge from submit-queue. If you want to cherry-pick this change to another branch, please follow the instructions <a href="https://github.com/kubernetes/community/blob/master/contributors/devel/cherry-picks.md">here</a>.
-    
-    Added PV GET api rule to external-provisioner
-    
-    Adds the PV GET API rule to the system:external-provisioner cluster role. It is required because the provisioner does a GET here:
-    https://github.com/kubernetes-incubator/external-storage/blob/master/lib/controller/controller.go#L1121
-    
-    Fixes #65058
-    
-    /sig storage
-    /kind bug
-    /priority critical-urgent
-    /cc @msau42 @sbezverk
-    
-    ```release-note
-    NONE
-    ```
+    Update CHANGELOG-1.12.md for v1.12.3.

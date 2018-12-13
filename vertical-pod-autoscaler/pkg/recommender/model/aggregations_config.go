@@ -39,12 +39,9 @@ var (
 	// MemoryHistogramOptions are options to be used by histograms that
 	// store memory measures expressed in bytes.
 	MemoryHistogramOptions = memoryHistogramOptions()
-	// HistogramBucketSizeRatio is the relative size of the histogram buckets
-	// (the ratio between the upper and the lower bound of the bucket).
-	HistogramBucketSizeRatio = 0.05
-	// HistogramRelativeError is the maximum relative error introduced by
-	// the histogram (except for the boundary buckets).
-	HistogramRelativeError = HistogramBucketSizeRatio / 2.
+	// HistogramBucketSizeGrowth defines the growth rate of the histogram buckets.
+	// Each bucket is wider than the previous one by this fraction.
+	HistogramBucketSizeGrowth = 0.05 // Make each bucket 5% larger than the previous one.
 	// MemoryHistogramDecayHalfLife is the amount of time it takes a historical
 	// memory usage sample to lose half of its weight. In other words, a fresh
 	// usage sample is twice as 'important' as one with age equal to the half
@@ -55,10 +52,20 @@ var (
 	CPUHistogramDecayHalfLife = time.Hour * 24
 )
 
+const (
+	// minSampleWeight is the minimal weight of any sample (prior to including decaying factor)
+	minSampleWeight = 0.1
+	// epsilon is the minimal weight kept in histograms, it should be small enough that old samples
+	// (just inside MemoryAggregationWindowLength) added with minSampleWeight are still kept
+	epsilon = 0.001 * minSampleWeight
+)
+
 func cpuHistogramOptions() util.HistogramOptions {
 	// CPU histograms use exponential bucketing scheme with the smallest bucket
-	// size of 0.1 core, max of 1000.0 cores and the relative error of HistogramRelativeError.
-	options, err := util.NewExponentialHistogramOptions(1000.0, 0.1, 1.+HistogramBucketSizeRatio, 0.1)
+	// size of 0.01 core, max of 1000.0 cores and the relative error of HistogramRelativeError.
+	//
+	// When parameters below are changed SupportedCheckpointVersion has to be bumped.
+	options, err := util.NewExponentialHistogramOptions(1000.0, 0.01, 1.+HistogramBucketSizeGrowth, epsilon)
 	if err != nil {
 		panic("Invalid CPU histogram options") // Should not happen.
 	}
@@ -68,7 +75,9 @@ func cpuHistogramOptions() util.HistogramOptions {
 func memoryHistogramOptions() util.HistogramOptions {
 	// Memory histograms use exponential bucketing scheme with the smallest
 	// bucket size of 10MB, max of 1TB and the relative error of HistogramRelativeError.
-	options, err := util.NewExponentialHistogramOptions(1e12, 1e7, 1.+HistogramBucketSizeRatio, 0.1)
+	//
+	// When parameters below are changed SupportedCheckpointVersion has to be bumped.
+	options, err := util.NewExponentialHistogramOptions(1e12, 1e7, 1.+HistogramBucketSizeGrowth, epsilon)
 	if err != nil {
 		panic("Invalid memory histogram options") // Should not happen.
 	}

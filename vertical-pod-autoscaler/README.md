@@ -8,6 +8,8 @@ When configured, it will set the requests automatically based on usage and
 thus allow proper scheduling onto nodes so that appropriate resource amount is
 available for each pod.
 
+It can both down-scale pods that are over-requesting resources, and also up-scale pods that are under-requesting resources based on their usage over time.
+
 Autoscaling is configured with a
 [Custom Resource Definition object](https://kubernetes.io/docs/concepts/api-extension/custom-resources/)
 called [VerticalPodAutoscaler](https://github.com/kubernetes/autoscaler/blob/master/vertical-pod-autoscaler/pkg/apis/poc.autoscaling.k8s.io/v1alpha1/types.go).
@@ -20,12 +22,19 @@ procedure described below.
 
 # Installation
 
+### Notice on the backwards compatibility
+
+During alpha the VPA CRD object may evolve in a way that is not compatible between releases.
+If you install a new release of VPA it is safest to delete the existing VPA CRD objects.
+Note that this will happen automatically if you just use the `vpa-down.sh` script to tear down
+the old installation of VPA.
+
 ### Prerequisites
 
 * It is strongly recommended to use Kubernetes 1.9 or greater.
   Your cluster must support MutatingAdmissionWebhooks, which are enabled by default
   since 1.9 ([#58255](https://github.com/kubernetes/kubernetes/pull/58255)).
-  Read more about [VPA Admission Webhook](./admission-controller/README.md#running).
+  Read more about [VPA Admission Webhook](./pkg/admission-controller/README.md#running).
 * `kubectl` should be connected to the cluster you want to install VPA in.
 * The metrics server must be deployed in your cluster. Read more about [Metrics Server](https://github.com/kubernetes-incubator/metrics-server).
 * If you are using a GKE Kubernetes cluster, you will need to grant your current Google
@@ -37,6 +46,11 @@ procedure described below.
 
   $ kubectl create clusterrolebinding myname-cluster-admin-binding --clusterrole=cluster-admin --user=myname@example.org
   Clusterrolebinding "myname-cluster-admin-binding" created
+  ```
+* If you already have another version of VPA installed in your cluster, you have to tear down
+  the existing installation first with:
+  ```
+  ./hack/vpa-down.sh
   ```
 
 ### Install command
@@ -53,7 +67,7 @@ Make sure you leave them unset unless you want to use a non-default version of V
 
 The script issues multiple `kubectl` commands to the
 cluster that insert the configuration and start all needed pods (see
-[architecture](http://github.com/kubernetes/community/blob/master/contributors/design-proposals/autoscaling/vertical-pod-autoscaler.md#architecture-overview))
+[architecture](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/autoscaling/vertical-pod-autoscaler.md#architecture-overview))
 in the `kube-system` namespace. It also generates
 and uploads a secret (a CA cert) used by VPA Admission Controller when communicating
 with the API server.
@@ -69,8 +83,16 @@ automatically and use the same label selector as the *Deployment* uses.
 There are three modes in which *VPAs* operate:
 
 * `"Auto"`: VPA assigns resource requests on pod creation as well as updates
-  them on running pods (only if they differ significantly from the new
-  recommendation and only within Eviction API limits). This is the default setting.
+  them on existing pods using the preferred update mechanism. Currently this is
+  equivalent to `"Recreate"` (see below). Once restart free ("in-place") update
+  of pod requests is available, it may be used as the preferred update mechanism by
+  the `"Auto"` mode.
+* `"Recreate"`: VPA assigns resource requests on pod creation as well as updates
+  them on existing pods by evicting them when the requested resources differ significantly
+  from the new recommendation (respecting the Pod Disruption Budget, if defined).
+  This mode should be used rarely, only if you need to ensure that the pods are restarted
+  whenever the resource request changes. Otherwise prefer the `"Auto"` mode which may take
+  advantage of restart free updates once they are available.
 * `"Initial"`: VPA only assigns resource requests on pod creation and never changes them
   later.
 * `"Off"`: VPA does not automatically change resource requirements of the pods.
@@ -151,16 +173,34 @@ or recreated by their controller due to Updater's activity).
 
 More on the architecture can be found [HERE](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/autoscaling/vertical-pod-autoscaler.md).
 
-# Known limitations of the alpha version
+### Tear down
+
+Note that if you stop running VPA in your cluster, the resource requests
+for the pods already modified by VPA will not change, but any new pods
+will get resources as defined in your controllers (i.e. deployment or
+replicaset) and not according to previous recommendations made by VPA.
+
+To stop using Vertical Pod Autoscaling in your cluster:
+* If running on GKE, clean up role bindings created in [Prerequisites](#prerequisites):
+```
+kubectl delete clusterrolebinding myname-cluster-admin-binding
+```
+* Tear down VPA components:
+```
+./hack/vpa-down.sh
+```
+
+# Known limitations
+
+## Limitations of alpha version
 
 * Whenever VPA updates the pod resources the pod is recreated, which causes all
-  running containers to be restarted.
-* Vertical Pod Autoscaler is **not fully compatible with the Horizontal Pod Autoscaler**
-  at this moment. You should either use one or the other, depending on which one is
-  more suitable to a specific workload.
-* VPA in `auto` mode can only be used on pods that run under a controller
+  running containers to be restarted. The pod may be recreated on a different node.
+* Vertical Pod Autoscaler **should not be used with the [Horizontal Pod Autoscaler](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) (HPA) on CPU or memory** at this moment. 
+  However, you can use VPA with [HPA on custom and external metrics](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#support-for-custom-metrics).
+* VPA in `Auto` mode can only be used on pods that run under a controller
   (such as Deployment), which is responsible for restarting deleted pods.
-  **Using VPA in `auto` mode with a pod not running under any controller will
+  **Using VPA in `Auto` mode with a pod not running under any controller will
   cause the pod to be deleted and not recreated**.
 * The VPA admission controller is an admission webhook. If you add other admission webhooks
   to you cluster, it is important to analyze how they interact and whether they may conflict
@@ -172,9 +212,20 @@ More on the architecture can be found [HERE](https://github.com/kubernetes/commu
   using VPA together with [Cluster Autoscaler](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md#basics).
 * Multiple VPA resources matching the same pod have undefined behavior.
 
+## Limitations of the beta version
+
+The limitations from alpha version still apply except for note about `Auto`
+mode.
+
+* VPA does not evict pods which are not run under a controller. For such pods
+  `Auto` mode is currently equivalent to `Initial`.
+* VPA does not change resource limits. This implies that recommendations are
+  capped to limits during actuation.
+  **NOTE** This behaviour is likely to change so please don't rely on it.
+
 # Related links
 
 * [Design
-  proposal](http://github.com/kubernetes/community/blob/master/contributors/design-proposals/autoscaling/vertical-pod-autoscaler.md)
+  proposal](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/autoscaling/vertical-pod-autoscaler.md)
 * [API
-  definition](http://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler/pkg/apis/poc.autoscaling.k8s.io/v1alpha1/types.go)
+  definition](https://github.com/kubernetes/autoscaler/blob/master/vertical-pod-autoscaler/pkg/apis/poc.autoscaling.k8s.io/v1alpha1/types.go)

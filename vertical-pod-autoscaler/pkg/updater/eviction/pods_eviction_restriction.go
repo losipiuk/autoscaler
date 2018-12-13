@@ -18,12 +18,23 @@ package eviction
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/golang/glog"
+	appsv1 "k8s.io/api/apps/v1"
 	apiv1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metrics_updater "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/metrics/updater"
+	appsinformer "k8s.io/client-go/informers/apps/v1"
+	coreinformer "k8s.io/client-go/informers/core/v1"
 	kube_client "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
+)
+
+const (
+	resyncPeriod time.Duration = 1 * time.Minute
 )
 
 // PodsEvictionRestriction controls pods evictions. It ensures that we will not evict too
@@ -31,16 +42,24 @@ import (
 // evictionToleranceFraction is configured.
 type PodsEvictionRestriction interface {
 	// Evict sends eviction instruction to the api client.
-	// Retrurns error if pod cannot be evicted or if client returned error.
-	Evict(pod *apiv1.Pod) error
+	// Returns error if pod cannot be evicted or if client returned error.
+	Evict(pod *apiv1.Pod, eventRecorder record.EventRecorder) error
 	// CanEvict checks if pod can be safely evicted
 	CanEvict(pod *apiv1.Pod) bool
 }
 
 type podsEvictionRestrictionImpl struct {
-	client         kube_client.Interface
-	podsCreators   map[string]podReplicaCreator
-	evictionBudget map[podReplicaCreator]int
+	client                       kube_client.Interface
+	podToReplicaCreatorMap       map[string]podReplicaCreator
+	creatorToSingleGroupStatsMap map[podReplicaCreator]singleGroupStats
+}
+
+type singleGroupStats struct {
+	configured        int
+	pending           int
+	running           int
+	evictionTolerance int
+	evicted           int
 }
 
 // PodsEvictionRestrictionFactory creates PodsEvictionRestriction
@@ -51,33 +70,61 @@ type PodsEvictionRestrictionFactory interface {
 
 type podsEvictionRestrictionFactoryImpl struct {
 	client                    kube_client.Interface
+	rcInformer                cache.SharedIndexInformer // informer for Replication Controllers
+	ssInformer                cache.SharedIndexInformer // informer for Stateful Sets
+	rsInformer                cache.SharedIndexInformer // informer for Replica Sets
 	minReplicas               int
 	evictionToleranceFraction float64
 }
 
+type controllerKind string
+
+const (
+	replicationController controllerKind = "ReplicationController"
+	statefulSet           controllerKind = "StatefulSet"
+	replicaSet            controllerKind = "ReplicaSet"
+	job                   controllerKind = "Job"
+)
+
 type podReplicaCreator struct {
 	Namespace string
 	Name      string
-	Kind      string
+	Kind      controllerKind
 }
 
 // CanEvict checks if pod can be safely evicted
 func (e *podsEvictionRestrictionImpl) CanEvict(pod *apiv1.Pod) bool {
-	cr, present := e.podsCreators[getPodID(pod)]
+	cr, present := e.podToReplicaCreatorMap[getPodID(pod)]
 	if present {
-		return e.evictionBudget[cr] > 0
+		singleGroupStats, present := e.creatorToSingleGroupStatsMap[cr]
+		if pod.Status.Phase == apiv1.PodPending {
+			return true
+		}
+		if present {
+			shouldBeAlive := singleGroupStats.configured - singleGroupStats.evictionTolerance
+			if singleGroupStats.running-singleGroupStats.evicted > shouldBeAlive {
+				return true
+			}
+			// If all pods are running and eviction tollerance is small evict 1 pod.
+			if singleGroupStats.running == singleGroupStats.configured &&
+				singleGroupStats.evictionTolerance == 0 &&
+				singleGroupStats.evicted == 0 {
+				return true
+			}
+		}
 	}
 	return false
 }
 
-// Evict sends eviction instruction to api client. Retrurns error if pod cannot be evicted or if client returned error
+// Evict sends eviction instruction to api client. Returns error if pod cannot be evicted or if client returned error
 // Does not check if pod was actually evicted after eviction grace period.
-func (e *podsEvictionRestrictionImpl) Evict(podToEvict *apiv1.Pod) error {
-	cr, present := e.podsCreators[getPodID(podToEvict)]
+func (e *podsEvictionRestrictionImpl) Evict(podToEvict *apiv1.Pod, eventRecorder record.EventRecorder) error {
+	cr, present := e.podToReplicaCreatorMap[getPodID(podToEvict)]
 	if !present {
 		return fmt.Errorf("pod not suitable for eviction %v : not in replicated pods map", podToEvict.Name)
 	}
-	if e.evictionBudget[cr] < 1 {
+
+	if !e.CanEvict(podToEvict) {
 		return fmt.Errorf("cannot evict pod %v : eviction budget exceeded", podToEvict.Name)
 	}
 
@@ -89,16 +136,47 @@ func (e *podsEvictionRestrictionImpl) Evict(podToEvict *apiv1.Pod) error {
 	}
 	err := e.client.CoreV1().Pods(podToEvict.Namespace).Evict(eviction)
 	if err != nil {
-		glog.Errorf("failed to evict pod %s, error: %v", podToEvict.Name, err)
+		glog.Errorf("failed to evict pod %s/%s, error: %v", podToEvict.Namespace, podToEvict.Name, err)
 		return err
 	}
-	e.evictionBudget[cr] = e.evictionBudget[cr] - 1
+	eventRecorder.Event(podToEvict, apiv1.EventTypeNormal, "EvictedByVPA",
+		"Pod was evicted by VPA Updater to apply resource recommendation.")
+	metrics_updater.AddEvictedPod()
+
+	if podToEvict.Status.Phase != apiv1.PodPending {
+		singleGroupStats, present := e.creatorToSingleGroupStatsMap[cr]
+		if !present {
+			return fmt.Errorf("Internal error - cannot find stats for replication group %v", cr)
+		}
+		singleGroupStats.evicted = singleGroupStats.evicted + 1
+		e.creatorToSingleGroupStatsMap[cr] = singleGroupStats
+	}
+
 	return nil
 }
 
 // NewPodsEvictionRestrictionFactory creates PodsEvictionRestrictionFactory
-func NewPodsEvictionRestrictionFactory(client kube_client.Interface, minReplicas int, evictionToleranceFraction float64) PodsEvictionRestrictionFactory {
-	return &podsEvictionRestrictionFactoryImpl{client: client, minReplicas: minReplicas, evictionToleranceFraction: evictionToleranceFraction}
+func NewPodsEvictionRestrictionFactory(client kube_client.Interface, minReplicas int,
+	evictionToleranceFraction float64) (PodsEvictionRestrictionFactory, error) {
+	rcInformer, err := setUpInformer(client, replicationController)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create rcInformer: %v", err)
+	}
+	ssInformer, err := setUpInformer(client, statefulSet)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create ssInformer: %v", err)
+	}
+	rsInformer, err := setUpInformer(client, replicaSet)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create rsInformer: %v", err)
+	}
+	return &podsEvictionRestrictionFactoryImpl{
+		client:                    client,
+		rcInformer:                rcInformer, // informer for Replication Controllers
+		ssInformer:                ssInformer, // informer for Replica Sets
+		rsInformer:                rsInformer, // informer for Stateful Sets
+		minReplicas:               minReplicas,
+		evictionToleranceFraction: evictionToleranceFraction}, nil
 }
 
 // NewPodsEvictionRestriction creates PodsEvictionRestriction for a given set of pods.
@@ -116,14 +194,15 @@ func (f *podsEvictionRestrictionFactoryImpl) NewPodsEvictionRestriction(pods []*
 			continue
 		}
 		if creator == nil {
-			glog.V(2).Infof("pod %s not replicated", pod.Name)
+			glog.Warningf("pod %s not replicated", pod.Name)
 			continue
 		}
 		livePods[*creator] = append(livePods[*creator], pod)
 	}
 
-	podsCreators := make(map[string]podReplicaCreator)
-	creatorsEvictionBudget := make(map[podReplicaCreator]int)
+	podToReplicaCreatorMap := make(map[string]podReplicaCreator)
+	creatorToSingleGroupStatsMap := make(map[podReplicaCreator]singleGroupStats)
+
 	for creator, replicas := range livePods {
 		actual := len(replicas)
 		if actual < f.minReplicas {
@@ -133,12 +212,12 @@ func (f *podsEvictionRestrictionFactoryImpl) NewPodsEvictionRestriction(pods []*
 		}
 
 		var configured int
-		if creator.Kind == "Job" {
+		if creator.Kind == job {
 			// Job has no replicas configuration, so we will use actual number of live pods as replicas count.
 			configured = actual
 		} else {
 			var err error
-			configured, err = getReplicaCount(creator, f.client)
+			configured, err = f.getReplicaCount(creator)
 			if err != nil {
 				glog.Errorf("failed to obtain replication info for %v %v/%v. %v",
 					creator.Kind, creator.Namespace, creator.Name, err)
@@ -146,23 +225,22 @@ func (f *podsEvictionRestrictionFactoryImpl) NewPodsEvictionRestriction(pods []*
 			}
 		}
 
-		evictionTolerance := int(float64(configured) * f.evictionToleranceFraction)
-		currentlyEvicted := configured - actual
-		evictionBudget := evictionTolerance - currentlyEvicted
-
-		if evictionBudget > 0 {
-			creatorsEvictionBudget[creator] = evictionBudget
-		} else {
-			creatorsEvictionBudget[creator] = 1
-			glog.V(2).Infof("configured eviction tolerance for pods from %v %v/%v too low. Setting eviction budget to 1",
-				creator.Kind, creator.Namespace, creator.Name)
-		}
-
+		singleGroup := singleGroupStats{}
+		singleGroup.configured = configured
+		singleGroup.evictionTolerance = int(float64(configured) * f.evictionToleranceFraction)
 		for _, pod := range replicas {
-			podsCreators[getPodID(pod)] = creator
+			podToReplicaCreatorMap[getPodID(pod)] = creator
+			if pod.Status.Phase == apiv1.PodPending {
+				singleGroup.pending = singleGroup.pending + 1
+			}
 		}
+		singleGroup.running = len(replicas) - singleGroup.pending
+		creatorToSingleGroupStatsMap[creator] = singleGroup
 	}
-	return &podsEvictionRestrictionImpl{client: f.client, podsCreators: podsCreators, evictionBudget: creatorsEvictionBudget}
+	return &podsEvictionRestrictionImpl{
+		client:                       f.client,
+		podToReplicaCreatorMap:       podToReplicaCreatorMap,
+		creatorToSingleGroupStatsMap: creatorToSingleGroupStatsMap}
 }
 
 func getPodReplicaCreator(pod *apiv1.Pod) (*podReplicaCreator, error) {
@@ -173,7 +251,7 @@ func getPodReplicaCreator(pod *apiv1.Pod) (*podReplicaCreator, error) {
 	podReplicaCreator := &podReplicaCreator{
 		Namespace: pod.Namespace,
 		Name:      creator.Name,
-		Kind:      creator.Kind,
+		Kind:      controllerKind(creator.Kind),
 	}
 	return podReplicaCreator, nil
 }
@@ -185,34 +263,53 @@ func getPodID(pod *apiv1.Pod) string {
 	return pod.Namespace + "/" + pod.Name
 }
 
-func getReplicaCount(creator podReplicaCreator, client kube_client.Interface) (int, error) {
+func (f *podsEvictionRestrictionFactoryImpl) getReplicaCount(creator podReplicaCreator) (int, error) {
 	switch creator.Kind {
-	case "ReplicationController":
-		rc, err := client.CoreV1().ReplicationControllers(creator.Namespace).Get(creator.Name, metav1.GetOptions{})
-
-		if err != nil || rc == nil {
+	case replicationController:
+		rcObj, exists, err := f.rcInformer.GetStore().GetByKey(creator.Namespace + "/" + creator.Name)
+		if err != nil {
 			return 0, fmt.Errorf("replication controller %s/%s is not available, err: %v", creator.Namespace, creator.Name, err)
+		}
+		if !exists {
+			return 0, fmt.Errorf("replication controller %s/%s does not exist", creator.Namespace, creator.Name)
+		}
+		rc, ok := rcObj.(*apiv1.ReplicationController)
+		if !ok {
+			return 0, fmt.Errorf("Failed to parse Replication Controller")
 		}
 		if rc.Spec.Replicas == nil || *rc.Spec.Replicas == 0 {
 			return 0, fmt.Errorf("replication controller %s/%s has no replicas config", creator.Namespace, creator.Name)
 		}
 		return int(*rc.Spec.Replicas), nil
 
-	case "ReplicaSet":
-		rs, err := client.ExtensionsV1beta1().ReplicaSets(creator.Namespace).Get(creator.Name, metav1.GetOptions{})
-
-		if err != nil || rs == nil {
+	case replicaSet:
+		rsObj, exists, err := f.rsInformer.GetStore().GetByKey(creator.Namespace + "/" + creator.Name)
+		if err != nil {
 			return 0, fmt.Errorf("replica set %s/%s is not available, err: %v", creator.Namespace, creator.Name, err)
+		}
+		if !exists {
+			return 0, fmt.Errorf("replica set %s/%s does not exist", creator.Namespace, creator.Name)
+		}
+		rs, ok := rsObj.(*appsv1.ReplicaSet)
+		if !ok {
+			return 0, fmt.Errorf("Failed to parse Replicaset")
 		}
 		if rs.Spec.Replicas == nil || *rs.Spec.Replicas == 0 {
 			return 0, fmt.Errorf("replica set %s/%s has no replicas config", creator.Namespace, creator.Name)
 		}
 		return int(*rs.Spec.Replicas), nil
 
-	case "StatefulSet":
-		ss, err := client.AppsV1beta1().StatefulSets(creator.Namespace).Get(creator.Name, metav1.GetOptions{})
-		if err != nil || ss == nil {
+	case statefulSet:
+		ssObj, exists, err := f.ssInformer.GetStore().GetByKey(creator.Namespace + "/" + creator.Name)
+		if err != nil {
 			return 0, fmt.Errorf("stateful set %s/%s is not available, err: %v", creator.Namespace, creator.Name, err)
+		}
+		if !exists {
+			return 0, fmt.Errorf("stateful set %s/%s does not exist", creator.Namespace, creator.Name)
+		}
+		ss, ok := ssObj.(*appsv1.StatefulSet)
+		if !ok {
+			return 0, fmt.Errorf("Failed to parse StatefulSet")
 		}
 		if ss.Spec.Replicas == nil || *ss.Spec.Replicas == 0 {
 			return 0, fmt.Errorf("stateful set %s/%s has no replicas config", creator.Namespace, creator.Name)
@@ -232,4 +329,28 @@ func managingControllerRef(pod *apiv1.Pod) *metav1.OwnerReference {
 		}
 	}
 	return &managingController
+}
+
+func setUpInformer(kubeClient kube_client.Interface, kind controllerKind) (cache.SharedIndexInformer, error) {
+	var informer cache.SharedIndexInformer
+	switch kind {
+	case replicationController:
+		informer = coreinformer.NewReplicationControllerInformer(kubeClient, apiv1.NamespaceAll,
+			resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	case replicaSet:
+		informer = appsinformer.NewReplicaSetInformer(kubeClient, apiv1.NamespaceAll,
+			resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	case statefulSet:
+		informer = appsinformer.NewStatefulSetInformer(kubeClient, apiv1.NamespaceAll,
+			resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	default:
+		return nil, fmt.Errorf("Unknown controller kind: %v", kind)
+	}
+	stopCh := make(chan struct{})
+	go informer.Run(stopCh)
+	synced := cache.WaitForCacheSync(stopCh, informer.HasSynced)
+	if !synced {
+		return nil, fmt.Errorf("Failed to sync %v cache.", kind)
+	}
+	return informer, nil
 }

@@ -100,7 +100,7 @@ func selfRegistration(clientset *kubernetes.Clientset, caCert []byte) {
 				Name: "vpa.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{
 					{
-						Operations: []v1beta1.OperationType{v1beta1.Create, v1beta1.Update},
+						Operations: []v1beta1.OperationType{v1beta1.Create},
 						Rule: v1beta1.Rule{
 							APIGroups:   []string{""},
 							APIVersions: []string{"v1"},
@@ -110,8 +110,8 @@ func selfRegistration(clientset *kubernetes.Clientset, caCert []byte) {
 					{
 						Operations: []v1beta1.OperationType{v1beta1.Create, v1beta1.Update},
 						Rule: v1beta1.Rule{
-							APIGroups:   []string{"poc.autoscaling.k8s.io"},
-							APIVersions: []string{"v1alpha1"},
+							APIGroups:   []string{"autoscaling.k8s.io"},
+							APIVersions: []string{"v1beta1"},
 							Resources:   []string{"verticalpodautoscalers"},
 						},
 					}},
