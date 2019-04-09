@@ -17,9 +17,7 @@ limitations under the License.
 package gce
 
 import (
-	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
@@ -64,9 +62,6 @@ type GceCache struct {
 	machinesCache       map[MachineTypeKey]*gce.MachineType
 	migTargetSizeCache  map[GceRef]int64
 	migBaseNameCache    map[GceRef]string
-
-	// Service used to refresh cache.
-	GceService AutoscalingGceClient
 }
 
 // NewGceCache creates empty GceCache.
@@ -77,7 +72,6 @@ func NewGceCache(gceService AutoscalingGceClient) GceCache {
 		machinesCache:       map[MachineTypeKey]*gce.MachineType{},
 		migTargetSizeCache:  map[GceRef]int64{},
 		migBaseNameCache:    map[GceRef]string{},
-		GceService:          gceService,
 	}
 }
 
@@ -112,7 +106,7 @@ func (gc *GceCache) UnregisterMig(toBeRemoved Mig) bool {
 	if found {
 		klog.V(1).Infof("Unregistered Mig %s", toBeRemoved.GceRef().String())
 		delete(gc.migs, toBeRemoved.GceRef())
-		gc.removeInstancesForMig(toBeRemoved.GceRef())
+		gc.invalidateMigInstancesNoLock(toBeRemoved.GceRef())
 		return true
 	}
 	return false
@@ -130,70 +124,40 @@ func (gc *GceCache) GetMigs() []Mig {
 	return migs
 }
 
-// GetMigs returns a copy of migs list.
-func (gc *GceCache) getMigRefs() []GceRef {
-	migRefs := make([]GceRef, 0, len(gc.migs))
-	for migRef := range gc.migs {
-		migRefs = append(migRefs, migRef)
-	}
-	return migRefs
-}
-
-// Methods locking on cacheMutex.
-
-// GetMigForInstance returns Mig to which the given instance belongs.
-// Attempts to regenerate cache if there is a Mig with matching prefix in migs list.
-// TODO(aleksandra-malinowska): reconsider failing when there's a Mig with
-// matching prefix, but instance doesn't belong to it.
-func (gc *GceCache) GetMigForInstance(instanceRef GceRef) (Mig, error) {
+// GetMig returns registered mig for given ref
+func (gc *GceCache) GetMig(migRef GceRef) (mig Mig, found bool) {
 	gc.cacheMutex.Lock()
 	defer gc.cacheMutex.Unlock()
-
-	if migRef, found := gc.instanceRefToMigRef[instanceRef]; found {
-		mig, found := gc.getMigNoLock(migRef)
-		if !found {
-			return nil, fmt.Errorf("instance %+v belongs to unregistered mig %+v", instanceRef, migRef)
-		}
-		return mig, nil
-	}
-
-	for _, migRef := range gc.getMigRefs() {
-
-		// get mig basename - refresh if not found
-		// todo[lukaszos] move this one as well as whole instance cache regeneration out of cache
-		migBasename, found := gc.migBaseNameCache[migRef]
-		var err error
-		if !found {
-			migBasename, err = gc.GceService.FetchMigBasename(migRef)
-			if err != nil {
-				return nil, err
-			}
-			gc.migBaseNameCache[migRef] = migBasename
-		}
-
-		if migRef.Project == instanceRef.Project &&
-			migRef.Zone == instanceRef.Zone &&
-			strings.HasPrefix(instanceRef.Name, migBasename) {
-			if err := gc.regenerateInstanceCacheForMigNoLock(migRef); err != nil {
-				return nil, fmt.Errorf("error while looking for MIG for instance %+v, error: %v", instanceRef, err)
-			}
-
-			migRef, found := gc.instanceRefToMigRef[instanceRef]
-			if !found {
-				return nil, fmt.Errorf("instance %+v belongs to unknown mig", instanceRef)
-			}
-			mig, found := gc.getMigNoLock(migRef)
-			if !found {
-				return nil, fmt.Errorf("instance %+v belongs to unregistered mig %+v", instanceRef, migRef)
-			}
-			return mig, nil
-		}
-	}
-	// Instance doesn't belong to any configured mig.
-	return nil, nil
+	mig, found = gc.migs[migRef]
+	return
 }
 
-func (gc *GceCache) removeInstancesForMig(migRef GceRef) {
+// GetMigRefForInstance returns Mig to which the given instance belongs.
+func (gc *GceCache) GetMigRefForInstance(instanceRef GceRef) (migRef GceRef, found bool) {
+	gc.cacheMutex.Lock()
+	defer gc.cacheMutex.Unlock()
+	migRef, found = gc.instanceRefToMigRef[instanceRef]
+	return
+}
+
+// SetMigInstances sets instance->mig mappings for one mig
+func (gc *GceCache) SetMigInstances(migRef GceRef, instanceRefs []GceRef) {
+	gc.cacheMutex.Lock()
+	defer gc.cacheMutex.Unlock()
+	gc.invalidateMigInstancesNoLock(migRef)
+	for _, instanceRef := range instanceRefs {
+		gc.instanceRefToMigRef[instanceRef] = migRef
+	}
+}
+
+// InvalidateMigInstances invalidate instance->mig mappings for one mig
+func (gc *GceCache) InvalidateMigInstances(migRef GceRef) {
+	gc.cacheMutex.Lock()
+	defer gc.cacheMutex.Unlock()
+	gc.invalidateMigInstancesNoLock(migRef)
+}
+
+func (gc *GceCache) invalidateMigInstancesNoLock(migRef GceRef) {
 	for instanceRef, instanceMigRef := range gc.instanceRefToMigRef {
 		if migRef == instanceMigRef {
 			delete(gc.instanceRefToMigRef, instanceRef)
@@ -201,52 +165,11 @@ func (gc *GceCache) removeInstancesForMig(migRef GceRef) {
 	}
 }
 
-func (gc *GceCache) getMigNoLock(migRef GceRef) (mig Mig, found bool) {
-	mig, found = gc.migs[migRef]
-	return
-}
-
-// RegenerateInstanceCacheForMig triggers instances cache regeneration for single MIG under lock.
-func (gc *GceCache) RegenerateInstanceCacheForMig(migRef GceRef) error {
+// InvalidateMigInstancesAll invalidate all instance->mig mappings
+func (gc *GceCache) InvalidateMigInstancesAll() {
 	gc.cacheMutex.Lock()
 	defer gc.cacheMutex.Unlock()
-	return gc.regenerateInstanceCacheForMigNoLock(migRef)
-}
-
-func (gc *GceCache) regenerateInstanceCacheForMigNoLock(migRef GceRef) error {
-	klog.V(4).Infof("Regenerating MIG information for %s", migRef.String())
-
-	// cleanup old entries
-	gc.removeInstancesForMig(migRef)
-
-	instances, err := gc.GceService.FetchMigInstances(migRef)
-	if err != nil {
-		klog.V(4).Infof("Failed MIG info request for %s: %v", migRef.String(), err)
-		return err
-	}
-	for _, instance := range instances {
-		instanceRef, err := GceRefFromProviderId(instance.Id)
-		if err != nil {
-			return err
-		}
-		gc.instanceRefToMigRef[instanceRef] = migRef
-	}
-	return nil
-}
-
-// RegenerateInstancesCache triggers instances cache regeneration under lock.
-func (gc *GceCache) RegenerateInstancesCache() error {
-	gc.cacheMutex.Lock()
-	defer gc.cacheMutex.Unlock()
-
 	gc.instanceRefToMigRef = make(map[GceRef]GceRef)
-	for _, migRef := range gc.getMigRefs() {
-		err := gc.regenerateInstanceCacheForMigNoLock(migRef)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // SetResourceLimiter sets resource limiter.

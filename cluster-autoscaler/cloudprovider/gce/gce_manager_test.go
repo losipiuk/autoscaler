@@ -270,7 +270,6 @@ func newTestGceManager(t *testing.T, testServerURL string, regional bool) *gceMa
 	manager := &gceManagerImpl{
 		cache: GceCache{
 			migs:                make(map[GceRef]Mig),
-			GceService:          gceService,
 			instanceRefToMigRef: make(map[GceRef]GceRef),
 			machinesCache: map[MachineTypeKey]*gce.MachineType{
 				{"us-central1-b", "n1-standard-1"}: {GuestCpus: 1, MemoryMb: 1},

@@ -176,7 +176,7 @@ func CreateGceManager(configReader io.Reader, discoveryOpts cloudprovider.NodeGr
 	}
 
 	go wait.Until(func() {
-		if err := manager.cache.RegenerateInstancesCache(); err != nil {
+		if err := manager.RegenerateInstancesCache(); err != nil {
 			klog.Errorf("Error while regenerating Mig cache: %v", err)
 		}
 		klog.Info("Invalidating MIG basename cache")
@@ -253,11 +253,6 @@ func (m *gceManagerImpl) GetMigs() []Mig {
 	return m.cache.GetMigs()
 }
 
-// GetMigForInstance returns MIG to which the given instance belongs.
-func (m *gceManagerImpl) GetMigForInstance(instance GceRef) (Mig, error) {
-	return m.cache.GetMigForInstance(instance)
-}
-
 // GetMigNodes returns mig nodes.
 func (m *gceManagerImpl) GetMigNodes(mig Mig) ([]cloudprovider.Instance, error) {
 	return m.GceService.FetchMigInstances(mig.GceRef())
@@ -299,7 +294,7 @@ func (m *gceManagerImpl) fetchExplicitMigs(specs []string) error {
 	}
 
 	if changed {
-		return m.cache.RegenerateInstancesCache()
+		return m.RegenerateInstancesCache()
 	}
 	return nil
 }
@@ -381,9 +376,97 @@ func (m *gceManagerImpl) fetchAutoMigs() error {
 	}
 
 	if changed {
-		return m.cache.RegenerateInstancesCache()
+		return m.RegenerateInstancesCache()
 	}
 
+	return nil
+}
+
+// GetMigForInstance gets mig for given instance ref
+// Attempts to regenerate cache if there is a Mig with matching prefix in migs list.
+// TODO(aleksandra-malinowska): reconsider failing when there's a Mig with
+// matching prefix, but instance doesn't belong to it.
+func (m *gceManagerImpl) GetMigForInstance(instanceRef GceRef) (Mig, error) {
+	migRef, found := m.cache.GetMigRefForInstance(instanceRef)
+	if found {
+		mig, found := m.cache.GetMig(migRef)
+		if !found {
+			return nil, fmt.Errorf("instance %+v belongs to unregistered mig %+v", instanceRef, migRef)
+		}
+		return mig, nil
+	}
+
+	for _, mig := range m.cache.GetMigs() {
+		migRef := mig.GceRef()
+
+		migBasename, found := m.cache.GetMigBasename(migRef)
+		var err error
+		if !found {
+			migBasename, err = m.GceService.FetchMigBasename(migRef)
+			if err != nil {
+				return nil, err
+			}
+			m.cache.SetMigBasename(migRef, migBasename)
+		}
+
+		if migRef.Project == instanceRef.Project &&
+			migRef.Zone == instanceRef.Zone &&
+			strings.HasPrefix(instanceRef.Name, migBasename) {
+
+			instanceRefs, err := m.regenerateInstanceCacheForMig(migRef)
+			if err != nil {
+				return nil, fmt.Errorf("error while looking for MIG for instance %+v, error: %v", instanceRef, err)
+			}
+
+			// see if instance found among instances obatained from GCE
+			found := false
+			for _, migInstanceRef := range instanceRefs {
+				if migInstanceRef == instanceRef {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("instance %+v does not belong to expected mig %+v", instanceRef, migRef)
+			}
+			return mig, nil
+		}
+	}
+	// Instance doesn't belong to any configured mig.
+	return nil, nil
+}
+
+// RegenerateInstanceCacheForMig triggers instances cache regeneration for single MIG
+func (m *gceManagerImpl) regenerateInstanceCacheForMig(migRef GceRef) (instanceRefs []GceRef, err error) {
+	klog.V(4).Infof("Regenerating MIG information for %s", migRef.String())
+
+	instances, err := m.GceService.FetchMigInstances(migRef)
+	if err != nil {
+		klog.V(4).Infof("Failed MIG info request for %s: %v", migRef.String(), err)
+		return []GceRef{}, err
+	}
+
+	instanceRefs = make([]GceRef, 0, len(instances))
+	for _, instance := range instances {
+		instanceRef, err := GceRefFromProviderId(instance.Id)
+		if err != nil {
+			return []GceRef{}, err
+		}
+		instanceRefs = append(instanceRefs, instanceRef)
+	}
+	m.cache.SetMigInstances(migRef, instanceRefs)
+
+	return instanceRefs, nil
+}
+
+// RegenerateInstancesCache triggers instances cache regeneration
+func (m *gceManagerImpl) RegenerateInstancesCache() error {
+	for _, mig := range m.cache.GetMigs() {
+		_, err := m.regenerateInstanceCacheForMig(mig.GceRef())
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
