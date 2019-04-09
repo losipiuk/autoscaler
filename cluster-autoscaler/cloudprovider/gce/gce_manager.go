@@ -64,7 +64,7 @@ type GceManager interface {
 	Cleanup() error
 
 	// GetMigs returns list of registered MIGs.
-	GetMigs() []*MigInformation
+	GetMigs() []Mig
 	// GetMigNodes returns mig nodes.
 	GetMigNodes(mig Mig) ([]cloudprovider.Instance, error)
 	// GetMigForInstance returns MIG to which the given instance belongs.
@@ -179,6 +179,8 @@ func CreateGceManager(configReader io.Reader, discoveryOpts cloudprovider.NodeGr
 		if err := manager.cache.RegenerateInstancesCache(); err != nil {
 			klog.Errorf("Error while regenerating Mig cache: %v", err)
 		}
+		klog.Info("Invalidating MIG basename cache")
+		manager.cache.InvalidateAllMigBasenames()
 	}, time.Hour, manager.interrupt)
 
 	return manager, nil
@@ -220,7 +222,7 @@ func (m *gceManagerImpl) GetMigSize(mig Mig) (int64, error) {
 // SetMigSize sets MIG size.
 func (m *gceManagerImpl) SetMigSize(mig Mig, size int64) error {
 	klog.V(0).Infof("Setting mig size %s to %d", mig.Id(), size)
-	m.cache.InvalidateTargetSizeCacheForMig(mig.GceRef())
+	m.cache.InvalidateMigTargetSize(mig.GceRef())
 	return m.GceService.ResizeMig(mig.GceRef(), size)
 }
 
@@ -242,12 +244,12 @@ func (m *gceManagerImpl) DeleteInstances(instances []GceRef) error {
 			return fmt.Errorf("cannot delete instances which don't belong to the same MIG.")
 		}
 	}
-	m.cache.InvalidateTargetSizeCacheForMig(commonMig.GceRef())
+	m.cache.InvalidateMigTargetSize(commonMig.GceRef())
 	return m.GceService.DeleteInstances(commonMig.GceRef(), instances)
 }
 
 // GetMigs returns list of registered MIGs.
-func (m *gceManagerImpl) GetMigs() []*MigInformation {
+func (m *gceManagerImpl) GetMigs() []Mig {
 	return m.cache.GetMigs()
 }
 
@@ -263,7 +265,7 @@ func (m *gceManagerImpl) GetMigNodes(mig Mig) ([]cloudprovider.Instance, error) 
 
 // Refresh triggers refresh of cached resources.
 func (m *gceManagerImpl) Refresh() error {
-	m.cache.InvalidateTargetSizeCache()
+	m.cache.InvalidateAllMigTargetSizes()
 	if m.lastRefresh.Add(refreshInterval).After(time.Now()) {
 		return nil
 	}
@@ -372,8 +374,8 @@ func (m *gceManagerImpl) fetchAutoMigs() error {
 	}
 
 	for _, mig := range m.GetMigs() {
-		if !exists[mig.Config.GceRef()] && !m.explicitlyConfigured[mig.Config.GceRef()] {
-			m.cache.UnregisterMig(mig.Config)
+		if !exists[mig.GceRef()] && !m.explicitlyConfigured[mig.GceRef()] {
+			m.cache.UnregisterMig(mig)
 			changed = true
 		}
 	}
