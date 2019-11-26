@@ -125,6 +125,7 @@ func NewPredicateChecker(kubeClient kube_client.Interface, stop <-chan struct{})
 		NoOpEventRecorder{},
 		stop,
 		scheduler.WithAlgorithmSource(algorithmSource),
+		scheduler.WithFrameworkConfigProducerRegistry(nil),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create scheduler; %v", err)
