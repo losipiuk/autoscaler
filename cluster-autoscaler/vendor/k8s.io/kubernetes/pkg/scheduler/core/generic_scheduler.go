@@ -134,6 +134,9 @@ type ScheduleAlgorithm interface {
 	// for cluster autoscaler integration.
 	// TODO(ahg-g): remove this once CA migrates to creating a Framework instead of a full scheduler.
 	PredicateMetadataProducer() predicates.MetadataProducer
+
+	// Snapshot snapshots (todo)
+	Snapshot() error
 }
 
 // ScheduleResult represents the result of one pod scheduled. It will contain
@@ -169,7 +172,7 @@ type genericScheduler struct {
 
 // snapshot snapshots scheduler cache and node infos for all fit and priority
 // functions.
-func (g *genericScheduler) snapshot() error {
+func (g *genericScheduler) Snapshot() error {
 	// Used for all fit and priority funcs.
 	return g.cache.UpdateNodeInfoSnapshot(g.nodeInfoSnapshot)
 }
@@ -192,7 +195,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	}
 	trace.Step("Basic checks done")
 
-	if err := g.snapshot(); err != nil {
+	if err := g.Snapshot(); err != nil {
 		return result, err
 	}
 	trace.Step("Snapshoting scheduler cache and node infos done")
