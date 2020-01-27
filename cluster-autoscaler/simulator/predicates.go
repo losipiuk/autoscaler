@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	kube_util "k8s.io/autoscaler/cluster-autoscaler/utils/kubernetes"
 
@@ -329,6 +330,15 @@ func (pe *PredicateError) PredicateName() string {
 // performance gains of CheckPredicates won't always offset the cost of GetPredicateMetadata.
 // Alternatively you can pass nil as predicateMetadata.
 func (p *PredicateChecker) CheckPredicates(pod *apiv1.Pod, predicateMetadata predicates.Metadata, nodeInfo *schedulernodeinfo.NodeInfo) *PredicateError {
+	if pod.Status.StartTime == nil {
+		prevStartTime := pod.Status.StartTime
+		pod.Status.StartTime = &metav1.Time{
+			Time: time.Now(),
+		}
+		defer func() {
+			pod.Status.StartTime = prevStartTime
+		}()
+	}
 	for _, predInfo := range p.predicates {
 		// Skip affinity predicate if it has been disabled.
 		if !p.enableAffinityPredicate && predInfo.Name == affinityPredicateName {
