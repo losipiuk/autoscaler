@@ -30,7 +30,7 @@ type PredicateChecker interface {
 	FitsAnyNode(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeInfos map[string]*scheduler_nodeinfo.NodeInfo) (string, error)
 	// TODO replace "*scheduler_nodeinfo.NodeInfo" with node name and expect nodeInfo to be part of schedulerLister
 	//      until then use FakeNodeInfoForNodeName when clusterSnapshot is passed
-	CheckPredicates(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) PredicateError
+	CheckPredicates(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) *PredicateError
 }
 
 // FakeNodeInfoForNodeName is used to generate fake node info which passes just a name
