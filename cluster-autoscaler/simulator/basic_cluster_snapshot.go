@@ -54,6 +54,7 @@ func (data *internalBasicSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 			havePodsWithAffinityList = append(havePodsWithAffinityList, v)
 		}
 	}
+
 	return havePodsWithAffinityList, nil
 }
 
@@ -116,6 +117,15 @@ func (data *internalBasicSnapshotData) addNode(node *apiv1.Node) error {
 		return fmt.Errorf("cannot set node in NodeInfo; %v", err)
 	}
 	data.nodeInfoMap[node.Name] = nodeInfo
+	return nil
+}
+
+func (data *internalBasicSnapshotData) addNodes(nodes []*apiv1.Node) error {
+	for _, node := range nodes {
+		if err := data.addNode(node); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -183,6 +193,11 @@ func (snapshot *BasicClusterSnapshot) getInternalData() *internalBasicSnapshotDa
 // AddNode adds node to the snapshot.
 func (snapshot *BasicClusterSnapshot) AddNode(node *apiv1.Node) error {
 	return snapshot.getInternalData().addNode(node)
+}
+
+// AddNodes adds nodes in batch to the snapshot.
+func (snapshot *BasicClusterSnapshot) AddNodes(nodes []*apiv1.Node) error {
+	return snapshot.getInternalData().addNodes(nodes)
 }
 
 // AddNodeWithPods adds a node and set of pods to be scheduled to this node to the snapshot.

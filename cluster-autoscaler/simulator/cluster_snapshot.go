@@ -27,6 +27,8 @@ import (
 type ClusterSnapshot interface {
 	// AddNode adds node to the snapshot.
 	AddNode(node *apiv1.Node) error
+	// AddNodes adds nodes to the snapshot.
+	AddNodes(nodes []*apiv1.Node) error
 	// RemoveNode removes nodes (and pods scheduled to it) from the snapshot.
 	RemoveNode(nodeName string) error
 	// AddPod adds pod to the snapshot and schedules it to given node.
