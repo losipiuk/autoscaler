@@ -25,7 +25,7 @@ import (
 	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 )
 
-// DeltaClusterSnapshot is implementation of ClusterSnapshot optimized for typical Cluster Autoscaler usage - (fork, add stuff, revert) repeated many times per loop.
+// DeltaClusterSnapshot is an implementation of ClusterSnapshot optimized for typical Cluster Autoscaler usage - (fork, add stuff, revert), repeated many times per loop.
 //
 // Complexity of some notable operations:
 //	fork - O(1)
@@ -109,71 +109,6 @@ func (data *internalDeltaSnapshotData) buildNodeInfoList() []*schedulernodeinfo.
 	}
 
 	return nodeInfoList
-}
-
-func (data *internalDeltaSnapshotDataNodeLister) List() ([]*schedulernodeinfo.NodeInfo, error) {
-	return (*internalDeltaSnapshotData)(data).getNodeInfoList(), nil
-}
-
-func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*schedulernodeinfo.NodeInfo, error) {
-	if data.havePodsWithAffinity != nil {
-		return data.havePodsWithAffinity, nil
-	}
-
-	nodeInfoList := (*internalDeltaSnapshotData)(data).getNodeInfoList()
-	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, 0, len(nodeInfoList))
-	for _, node := range nodeInfoList {
-		if len(node.PodsWithAffinity()) > 0 {
-			havePodsWithAffinityList = append(havePodsWithAffinityList, node)
-		}
-	}
-	data.havePodsWithAffinity = havePodsWithAffinityList
-	return data.havePodsWithAffinity, nil
-}
-
-func (data *internalDeltaSnapshotDataNodeLister) Get(nodeName string) (*schedulernodeinfo.NodeInfo, error) {
-	return (*internalDeltaSnapshotData)(data).getNodeInfo(nodeName)
-}
-
-func (data *internalDeltaSnapshotDataPodLister) List(selector labels.Selector) ([]*apiv1.Pod, error) {
-	if data.podList == nil {
-		data.podList = (*internalDeltaSnapshotData)(data).buildPodList()
-	}
-
-	if selector.Empty() {
-		// no restrictions, yay
-		return data.podList, nil
-	}
-
-	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
-	for _, pod := range data.podList {
-		if selector.Matches(labels.Set(pod.Labels)) {
-			selectedPods = append(selectedPods, pod)
-		}
-	}
-	return selectedPods, nil
-}
-
-func (data *internalDeltaSnapshotDataPodLister) FilteredList(podFilter schedulerlisters.PodFilter, selector labels.Selector) ([]*apiv1.Pod, error) {
-	if data.podList == nil {
-		data.podList = (*internalDeltaSnapshotData)(data).buildPodList()
-	}
-
-	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
-	for _, pod := range data.podList {
-		if podFilter(pod) && selector.Matches(labels.Set(pod.Labels)) {
-			selectedPods = append(selectedPods, pod)
-		}
-	}
-	return selectedPods, nil
-}
-
-func (data *internalDeltaSnapshotData) Pods() schedulerlisters.PodLister {
-	return (*internalDeltaSnapshotDataPodLister)(data)
-}
-
-func (data *internalDeltaSnapshotData) NodeInfos() schedulerlisters.NodeInfoLister {
-	return (*internalDeltaSnapshotDataNodeLister)(data)
 }
 
 // NewEmptySnapshot initializes a Snapshot struct and returns it.
@@ -398,6 +333,78 @@ func (data *internalDeltaSnapshotData) commit() *internalDeltaSnapshotData {
 	return data.baseData
 }
 
+// List returns list of all node infos.
+func (data *internalDeltaSnapshotDataNodeLister) List() ([]*schedulernodeinfo.NodeInfo, error) {
+	return (*internalDeltaSnapshotData)(data).getNodeInfoList(), nil
+}
+
+// HavePodsWithAffinityList returns list of all node infos with pods that have affinity constrints.
+func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*schedulernodeinfo.NodeInfo, error) {
+	if data.havePodsWithAffinity != nil {
+		return data.havePodsWithAffinity, nil
+	}
+
+	nodeInfoList := (*internalDeltaSnapshotData)(data).getNodeInfoList()
+	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, 0, len(nodeInfoList))
+	for _, node := range nodeInfoList {
+		if len(node.PodsWithAffinity()) > 0 {
+			havePodsWithAffinityList = append(havePodsWithAffinityList, node)
+		}
+	}
+	data.havePodsWithAffinity = havePodsWithAffinityList
+	return data.havePodsWithAffinity, nil
+}
+
+// Get returns node info by node name.
+func (data *internalDeltaSnapshotDataNodeLister) Get(nodeName string) (*schedulernodeinfo.NodeInfo, error) {
+	return (*internalDeltaSnapshotData)(data).getNodeInfo(nodeName)
+}
+
+// List returns all pods matching selector.
+func (data *internalDeltaSnapshotDataPodLister) List(selector labels.Selector) ([]*apiv1.Pod, error) {
+	if data.podList == nil {
+		data.podList = (*internalDeltaSnapshotData)(data).buildPodList()
+	}
+
+	if selector.Empty() {
+		// no restrictions, yay
+		return data.podList, nil
+	}
+
+	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
+	for _, pod := range data.podList {
+		if selector.Matches(labels.Set(pod.Labels)) {
+			selectedPods = append(selectedPods, pod)
+		}
+	}
+	return selectedPods, nil
+}
+
+// FilteredList returns all pods matching selector and filter.
+func (data *internalDeltaSnapshotDataPodLister) FilteredList(podFilter schedulerlisters.PodFilter, selector labels.Selector) ([]*apiv1.Pod, error) {
+	if data.podList == nil {
+		data.podList = (*internalDeltaSnapshotData)(data).buildPodList()
+	}
+
+	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
+	for _, pod := range data.podList {
+		if podFilter(pod) && selector.Matches(labels.Set(pod.Labels)) {
+			selectedPods = append(selectedPods, pod)
+		}
+	}
+	return selectedPods, nil
+}
+
+// Pods returns pod lister.
+func (data *internalDeltaSnapshotData) Pods() schedulerlisters.PodLister {
+	return (*internalDeltaSnapshotDataPodLister)(data)
+}
+
+// NodeInfos returns node lister.
+func (data *internalDeltaSnapshotData) NodeInfos() schedulerlisters.NodeInfoLister {
+	return (*internalDeltaSnapshotDataNodeLister)(data)
+}
+
 // NewDeltaClusterSnapshot creates instances of DeltaClusterSnapshot.
 func NewDeltaClusterSnapshot() *DeltaClusterSnapshot {
 	snapshot := &DeltaClusterSnapshot{}
@@ -453,9 +460,9 @@ func (snapshot *DeltaClusterSnapshot) GetAllNodes() ([]*apiv1.Node, error) {
 	return snapshot.data.getAllNodes()
 }
 
-// Time: O(1)
 // Fork creates a fork of snapshot state. All modifications can later be reverted to moment of forking via Revert()
 // Forking already forked snapshot is not allowed and will result with an error.
+// Time: O(1)
 func (snapshot *DeltaClusterSnapshot) Fork() error {
 	if snapshot.data.baseData != nil {
 		return fmt.Errorf("snapshot already forked")
@@ -464,8 +471,8 @@ func (snapshot *DeltaClusterSnapshot) Fork() error {
 	return nil
 }
 
-// Time: O(1)
 // Revert reverts snapshot state to moment of forking.
+// Time: O(1)
 func (snapshot *DeltaClusterSnapshot) Revert() error {
 	if snapshot.data.baseData == nil {
 		return fmt.Errorf("snapshot not forked")
@@ -475,15 +482,15 @@ func (snapshot *DeltaClusterSnapshot) Revert() error {
 
 }
 
-// Time: O(n), where n = size of delta (number of nodes added, modified or deleted since forking)
 // Commit commits changes done after forking.
+// Time: O(n), where n = size of delta (number of nodes added, modified or deleted since forking)
 func (snapshot *DeltaClusterSnapshot) Commit() error {
 	snapshot.data = snapshot.data.commit()
 	return nil
 }
 
-// Time: O(1)
 // Clear reset cluster snapshot to empty, unforked state
+// Time: O(1)
 func (snapshot *DeltaClusterSnapshot) Clear() error {
 	snapshot.data = newInternalDeltaSnapshotData()
 	return nil
