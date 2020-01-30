@@ -87,33 +87,27 @@ func (data *internalDeltaSnapshotData) GetNodeInfoList() []*schedulernodeinfo.No
 
 // Contains costly copying throughout the struct chain. Use wisely.
 func (data *internalDeltaSnapshotData) buildNodeInfoList() []*schedulernodeinfo.NodeInfo {
-	deltaList := make([]*schedulernodeinfo.NodeInfo, len(data.nodeInfoMap), len(data.nodeInfoMap)+100)
-	i := 0
-	for _, node := range data.nodeInfoMap {
-		deltaList[i] = node
-		i++
-	}
-	if data.baseData == nil {
-		return deltaList
-	}
 	baseList := data.baseData.GetNodeInfoList()
-	totalLen := len(baseList) + len(deltaList)
-	nodeInfoList := make([]*schedulernodeinfo.NodeInfo, totalLen, totalLen+100)
+	totalLen := len(baseList) + len(data.nodeInfoMap)
+	var nodeInfoList []*schedulernodeinfo.NodeInfo
+
 	if len(data.deletedNodeInfos) > 0 {
-		// Oops. Costly.
-		i := 0
+		nodeInfoList = make([]*schedulernodeinfo.NodeInfo, 0, totalLen+100)
 		for _, bni := range baseList {
 			if data.deletedNodeInfos[bni.Node().Name] {
 				continue
 			}
-			nodeInfoList[i] = bni
-			i++
+			nodeInfoList = append(nodeInfoList, bni)
 		}
-		nodeInfoList = nodeInfoList[:i]
 	} else {
+		nodeInfoList = make([]*schedulernodeinfo.NodeInfo, len(baseList), totalLen+100)
 		copy(nodeInfoList, baseList)
 	}
-	copy(nodeInfoList[len(baseList):], deltaList)
+
+	for _, dni := range data.nodeInfoMap {
+		nodeInfoList = append(nodeInfoList, dni)
+	}
+
 	return nodeInfoList
 }
 
@@ -127,16 +121,13 @@ func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 	}
 
 	nodeInfoList := (*internalDeltaSnapshotData)(data).GetNodeInfoList()
-	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, len(nodeInfoList), len(nodeInfoList))
-	// i is index in *output* list.
-	i := 0
+	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, 0, len(nodeInfoList))
 	for _, node := range nodeInfoList {
 		if len(node.PodsWithAffinity()) > 0 {
-			havePodsWithAffinityList[i] = node
-			i++
+			havePodsWithAffinityList = append(havePodsWithAffinityList, node)
 		}
 	}
-	data.havePodsWithAffinity = havePodsWithAffinityList[:i]
+	data.havePodsWithAffinity = havePodsWithAffinityList
 	return data.havePodsWithAffinity, nil
 }
 
@@ -154,16 +145,12 @@ func (data *internalDeltaSnapshotDataPodLister) List(selector labels.Selector) (
 		return data.podList, nil
 	}
 
-	selectedPods := make([]*apiv1.Pod, len(data.podList), len(data.podList))
-	// i is index in *output* list.
-	i := 0
+	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
 	for _, pod := range data.podList {
 		if selector.Matches(labels.Set(pod.Labels)) {
-			selectedPods[i] = pod
-			i++
+			selectedPods = append(selectedPods, pod)
 		}
 	}
-	selectedPods = selectedPods[:i]
 	return selectedPods, nil
 }
 
@@ -172,16 +159,12 @@ func (data *internalDeltaSnapshotDataPodLister) FilteredList(podFilter scheduler
 		(*internalDeltaSnapshotData)(data).buildPodList()
 	}
 
-	selectedPods := make([]*apiv1.Pod, len(data.podList), len(data.podList))
-	// i is index in *output* list.
-	i := 0
+	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
 	for _, pod := range data.podList {
 		if podFilter(pod) && selector.Matches(labels.Set(pod.Labels)) {
-			selectedPods[i] = pod
-			i++
+			selectedPods = append(selectedPods, pod)
 		}
 	}
-	selectedPods = selectedPods[:i]
 	return selectedPods, nil
 }
 
