@@ -62,15 +62,17 @@ type internalDeltaSnapshotData struct {
 	havePodsWithAffinity []*schedulernodeinfo.NodeInfo
 }
 
-func (data *internalDeltaSnapshotData) getNodeInfo(name string) (*schedulernodeinfo.NodeInfo, error) {
+var nodeNotFoundErr = fmt.Errorf("node not found")
+
+func (data *internalDeltaSnapshotData) getNodeInfo(name string) (*schedulernodeinfo.NodeInfo, bool) {
 	if data == nil {
-		return nil, fmt.Errorf("node not found")
+		return nil, false
 	}
 	if nodeInfo, found := data.nodeInfoMap[name]; found {
-		return nodeInfo, nil
+		return nodeInfo, true
 	}
 	if data.deletedNodeInfos[name] {
-		return nil, fmt.Errorf("node not found")
+		return nil, false
 	}
 	return data.baseData.getNodeInfo(name)
 }
@@ -169,21 +171,21 @@ func (data *internalDeltaSnapshotData) updateNode(node *schedulernodeinfo.NodeIn
 }
 
 func (data *internalDeltaSnapshotData) removeNode(nodeName string) error {
-	_, found := data.nodeInfoMap[nodeName]
-	if found {
+	_, foundInDelta := data.nodeInfoMap[nodeName]
+	if foundInDelta {
 		// If node was added or modified within this delta, delete this change.
 		delete(data.nodeInfoMap, nodeName)
 	}
 
-	ni, err := data.baseData.getNodeInfo(nodeName)
-	if err == nil && ni != nil {
+	_, foundInBase := data.baseData.getNodeInfo(nodeName)
+	if foundInBase {
 		// If node was found in the underlying data, mark it as deleted in delta.
 		data.deletedNodeInfos[nodeName] = true
 	}
 
-	if err != nil && !found {
+	if !foundInBase && !foundInDelta {
 		// Node not found in the chain.
-		return err
+		return nodeNotFoundErr
 	}
 
 	// Maybe consider deleting from the lists instead. Maybe not.
@@ -193,8 +195,8 @@ func (data *internalDeltaSnapshotData) removeNode(nodeName string) error {
 
 func (data *internalDeltaSnapshotData) addPod(pod *apiv1.Pod, nodeName string) error {
 	if _, found := data.nodeInfoMap[nodeName]; !found {
-		if ni, err := data.baseData.getNodeInfo(nodeName); err != nil {
-			return err
+		if ni, found := data.baseData.getNodeInfo(nodeName); !found {
+			return nodeNotFoundErr
 		} else {
 			data.nodeInfoMap[nodeName] = ni.Clone()
 		}
@@ -230,8 +232,8 @@ func (data *internalDeltaSnapshotData) removePod(namespace string, name string) 
 	}
 
 	if _, found := data.nodeInfoMap[nodeName]; !found {
-		if ni, err := data.baseData.getNodeInfo(nodeName); err != nil {
-			return err
+		if ni, found := data.baseData.getNodeInfo(nodeName); !found {
+			return nodeNotFoundErr
 		} else {
 			data.nodeInfoMap[nodeName] = ni.Clone()
 		}
@@ -357,7 +359,11 @@ func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 
 // Get returns node info by node name.
 func (data *internalDeltaSnapshotDataNodeLister) Get(nodeName string) (*schedulernodeinfo.NodeInfo, error) {
-	return (*internalDeltaSnapshotData)(data).getNodeInfo(nodeName)
+	node, found := (*internalDeltaSnapshotData)(data).getNodeInfo(nodeName)
+	if !found {
+		return nil, nodeNotFoundErr
+	}
+	return node, nil
 }
 
 // List returns all pods matching selector.
