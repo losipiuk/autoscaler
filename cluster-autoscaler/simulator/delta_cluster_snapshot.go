@@ -56,8 +56,8 @@ type internalDeltaSnapshotData struct {
 
 	nodeInfoList         []*schedulernodeinfo.NodeInfo
 	podList              []*apiv1.Pod
-	rawPods              [][]*apiv1.Pod
-	rawPodsTotal         int
+	podListChunks        [][]*apiv1.Pod
+	totalPods            int
 	havePodsWithAffinity []*schedulernodeinfo.NodeInfo
 }
 
@@ -156,8 +156,8 @@ func (data *internalDeltaSnapshotData) clearCaches() {
 
 func (data *internalDeltaSnapshotData) clearPodCaches() {
 	data.podList = nil
-	data.rawPods = nil
-	data.rawPodsTotal = 0
+	data.podListChunks = nil
+	data.totalPods = 0
 	data.havePodsWithAffinity = nil
 }
 
@@ -258,45 +258,45 @@ func (data *internalDeltaSnapshotData) removePod(namespace string, name string) 
 	if preAffinityPods == 1 && postAffinityPods == 0 {
 		data.havePodsWithAffinity = nil
 	}
-	if data.podList != nil || data.rawPods != nil {
+	if data.podList != nil || data.podListChunks != nil {
 		data.clearPodCaches()
 	}
 
 	return nil
 }
 
-func (data *internalDeltaSnapshotData) getRawPods() ([][]*apiv1.Pod, int) {
+func (data *internalDeltaSnapshotData) getPodListChunks() ([][]*apiv1.Pod, int) {
 	if data == nil {
 		return [][]*apiv1.Pod{}, 0
 	}
-	if data.rawPods != nil {
-		return data.rawPods, data.rawPodsTotal
+	if data.podListChunks != nil {
+		return data.podListChunks, data.totalPods
 	}
-	basePods, baseCount := data.baseData.getRawPods()
-	i := len(basePods)
-	total := baseCount
-	listCount := len(data.nodeInfoMap) + len(basePods)
-	pods := make([][]*apiv1.Pod, listCount, listCount)
-	copy(pods, basePods)
+	basePodChunks, baseTotalPods := data.baseData.getPodListChunks()
+	i := len(basePodChunks)
+	total := baseTotalPods
+	chunkCount := len(data.nodeInfoMap) + len(basePodChunks)
+	podChunks := make([][]*apiv1.Pod, chunkCount, chunkCount)
+	copy(podChunks, basePodChunks)
 	for _, node := range data.nodeInfoMap {
-		pods[i] = node.Pods()
-		total += len(pods[i])
+		podChunks[i] = node.Pods()
+		total += len(podChunks[i])
 		i++
 	}
 
-	data.rawPods = pods
-	data.rawPodsTotal = total
-	return pods, total
+	data.podListChunks = podChunks
+	data.totalPods = total
+	return podChunks, total
 }
 
 func (data *internalDeltaSnapshotData) buildPodList() []*apiv1.Pod {
-	pods, total := data.getRawPods()
+	podListChunks, total := data.getPodListChunks()
 	// Squash!
 	podList := make([]*apiv1.Pod, total, total+1000)
 	j := 0
-	for i := 0; i < len(pods); i++ {
-		copy(podList[j:], pods[i])
-		j += len(pods[i])
+	for i := 0; i < len(podListChunks); i++ {
+		copy(podList[j:], podListChunks[i])
+		j += len(podListChunks[i])
 	}
 	return podList
 }
