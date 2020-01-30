@@ -286,3 +286,61 @@ func TestFork(t *testing.T) {
 	}
 
 }
+
+func BenchmarkBuildNodeInfoList(b *testing.B) {
+	testCases := []struct {
+		nodeCount int
+	}{
+		{
+			nodeCount: 1000,
+		},
+		{
+			nodeCount: 5000,
+		},
+		{
+			nodeCount: 15000,
+		},
+		{
+			nodeCount: 100000,
+		},
+	}
+
+	for _, tc := range testCases {
+		b.Run(fmt.Sprintf("fork add 1000 to %d", tc.nodeCount), func(b *testing.B) {
+			nodes := createTestNodes(tc.nodeCount + 1000)
+			snapshot := NewDeltaClusterSnapshot()
+			if err := snapshot.AddNodes(nodes[:tc.nodeCount]); err != nil {
+				assert.NoError(b, err)
+			}
+			if err := snapshot.Fork(); err != nil {
+				assert.NoError(b, err)
+			}
+			if err := snapshot.AddNodes(nodes[tc.nodeCount:]); err != nil {
+				assert.NoError(b, err)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				list := snapshot.data.buildNodeInfoList()
+				if len(list) != tc.nodeCount+1000 {
+					assert.Equal(b, len(list), tc.nodeCount+1000)
+				}
+			}
+		})
+	}
+	for _, tc := range testCases {
+		b.Run(fmt.Sprintf("base %d", tc.nodeCount), func(b *testing.B) {
+			nodes := createTestNodes(tc.nodeCount)
+			snapshot := NewDeltaClusterSnapshot()
+			if err := snapshot.AddNodes(nodes); err != nil {
+				assert.NoError(b, err)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				list := snapshot.data.buildNodeInfoList()
+				if len(list) != tc.nodeCount {
+					assert.Equal(b, len(list), tc.nodeCount)
+				}
+			}
+		})
+	}
+}
