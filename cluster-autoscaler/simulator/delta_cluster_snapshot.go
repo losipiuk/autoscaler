@@ -62,7 +62,7 @@ type internalDeltaSnapshotData struct {
 	havePodsWithAffinity []*schedulernodeinfo.NodeInfo
 }
 
-func (data *internalDeltaSnapshotData) GetNodeInfo(name string) (*schedulernodeinfo.NodeInfo, error) {
+func (data *internalDeltaSnapshotData) getNodeInfo(name string) (*schedulernodeinfo.NodeInfo, error) {
 	if data == nil {
 		return nil, fmt.Errorf("node not found")
 	}
@@ -72,10 +72,10 @@ func (data *internalDeltaSnapshotData) GetNodeInfo(name string) (*schedulernodei
 	if data.deletedNodeInfos[name] {
 		return nil, fmt.Errorf("node not found")
 	}
-	return data.baseData.GetNodeInfo(name)
+	return data.baseData.getNodeInfo(name)
 }
 
-func (data *internalDeltaSnapshotData) GetNodeInfoList() []*schedulernodeinfo.NodeInfo {
+func (data *internalDeltaSnapshotData) getNodeInfoList() []*schedulernodeinfo.NodeInfo {
 	if data == nil {
 		return nil
 	}
@@ -87,7 +87,7 @@ func (data *internalDeltaSnapshotData) GetNodeInfoList() []*schedulernodeinfo.No
 
 // Contains costly copying throughout the struct chain. Use wisely.
 func (data *internalDeltaSnapshotData) buildNodeInfoList() []*schedulernodeinfo.NodeInfo {
-	baseList := data.baseData.GetNodeInfoList()
+	baseList := data.baseData.getNodeInfoList()
 	totalLen := len(baseList) + len(data.nodeInfoMap)
 	var nodeInfoList []*schedulernodeinfo.NodeInfo
 
@@ -112,7 +112,7 @@ func (data *internalDeltaSnapshotData) buildNodeInfoList() []*schedulernodeinfo.
 }
 
 func (data *internalDeltaSnapshotDataNodeLister) List() ([]*schedulernodeinfo.NodeInfo, error) {
-	return (*internalDeltaSnapshotData)(data).GetNodeInfoList(), nil
+	return (*internalDeltaSnapshotData)(data).getNodeInfoList(), nil
 }
 
 func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*schedulernodeinfo.NodeInfo, error) {
@@ -120,7 +120,7 @@ func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 		return data.havePodsWithAffinity, nil
 	}
 
-	nodeInfoList := (*internalDeltaSnapshotData)(data).GetNodeInfoList()
+	nodeInfoList := (*internalDeltaSnapshotData)(data).getNodeInfoList()
 	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, 0, len(nodeInfoList))
 	for _, node := range nodeInfoList {
 		if len(node.PodsWithAffinity()) > 0 {
@@ -132,7 +132,7 @@ func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 }
 
 func (data *internalDeltaSnapshotDataNodeLister) Get(nodeName string) (*schedulernodeinfo.NodeInfo, error) {
-	return (*internalDeltaSnapshotData)(data).GetNodeInfo(nodeName)
+	return (*internalDeltaSnapshotData)(data).getNodeInfo(nodeName)
 }
 
 func (data *internalDeltaSnapshotDataPodLister) List(selector labels.Selector) ([]*apiv1.Pod, error) {
@@ -240,7 +240,7 @@ func (data *internalDeltaSnapshotData) removeNode(nodeName string) error {
 		delete(data.nodeInfoMap, nodeName)
 	}
 
-	ni, err := data.baseData.GetNodeInfo(nodeName)
+	ni, err := data.baseData.getNodeInfo(nodeName)
 	if err == nil && ni != nil {
 		// If node was found in the underlying data, mark it as deleted in delta.
 		data.deletedNodeInfos[nodeName] = true
@@ -258,7 +258,7 @@ func (data *internalDeltaSnapshotData) removeNode(nodeName string) error {
 
 func (data *internalDeltaSnapshotData) addPod(pod *apiv1.Pod, nodeName string) error {
 	if _, found := data.nodeInfoMap[nodeName]; !found {
-		if ni, err := data.baseData.GetNodeInfo(nodeName); err != nil {
+		if ni, err := data.baseData.getNodeInfo(nodeName); err != nil {
 			return err
 		} else {
 			data.nodeInfoMap[nodeName] = ni.Clone()
@@ -295,7 +295,7 @@ func (data *internalDeltaSnapshotData) removePod(namespace string, name string) 
 	}
 
 	if _, found := data.nodeInfoMap[nodeName]; !found {
-		if ni, err := data.baseData.GetNodeInfo(nodeName); err != nil {
+		if ni, err := data.baseData.getNodeInfo(nodeName); err != nil {
 			return err
 		} else {
 			data.nodeInfoMap[nodeName] = ni.Clone()
@@ -374,7 +374,7 @@ func (data *internalDeltaSnapshotData) getAllPods() ([]*apiv1.Pod, error) {
 }
 
 func (data *internalDeltaSnapshotData) getAllNodes() ([]*apiv1.Node, error) {
-	nodeInfos := data.GetNodeInfoList()
+	nodeInfos := data.getNodeInfoList()
 	nodes := make([]*apiv1.Node, len(nodeInfos), len(nodeInfos))
 	for i, nodeInfo := range nodeInfos {
 		nodes[i] = nodeInfo.Node()
