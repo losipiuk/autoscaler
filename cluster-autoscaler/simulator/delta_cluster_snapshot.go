@@ -56,7 +56,6 @@ type internalDeltaSnapshotData struct {
 	deletedNodeInfos map[string]bool
 
 	nodeInfoList         []*schedulernodeinfo.NodeInfo
-	completeNodeInfoList []*schedulernodeinfo.NodeInfo
 	podList              []*apiv1.Pod
 	rawPods              [][]*apiv1.Pod
 	rawPodsTotal         int
@@ -70,7 +69,7 @@ func (data *internalDeltaSnapshotData) GetNodeInfo(name string) (*schedulernodei
 	if nodeInfo, found := data.nodeInfoMap[name]; found {
 		return nodeInfo, nil
 	}
-	if data.deletedNodeInfos[name] || data.baseData == nil {
+	if data.deletedNodeInfos[name] {
 		return nil, fmt.Errorf("node not found")
 	}
 	return data.baseData.GetNodeInfo(name)
@@ -80,29 +79,26 @@ func (data *internalDeltaSnapshotData) GetNodeInfoList() []*schedulernodeinfo.No
 	if data == nil {
 		return nil
 	}
-	if data.completeNodeInfoList == nil {
-		data.buildNodeInfoList()
+	if data.nodeInfoList == nil {
+		data.nodeInfoList = data.buildNodeInfoList()
 	}
-	return data.completeNodeInfoList
+	return data.nodeInfoList
 }
 
-// buildNodeInfoList contains costly copying throughout the struct chain. Use wisely.
-func (data *internalDeltaSnapshotData) buildNodeInfoList() {
-	if data.nodeInfoList == nil {
-		data.nodeInfoList = make([]*schedulernodeinfo.NodeInfo, len(data.nodeInfoMap), len(data.nodeInfoMap)+100)
-		i := 0
-		for _, node := range data.nodeInfoMap {
-			data.nodeInfoList[i] = node
-			i++
-		}
+// Contains costly copying throughout the struct chain. Use wisely.
+func (data *internalDeltaSnapshotData) buildNodeInfoList() []*schedulernodeinfo.NodeInfo {
+	deltaList := make([]*schedulernodeinfo.NodeInfo, len(data.nodeInfoMap), len(data.nodeInfoMap)+100)
+	i := 0
+	for _, node := range data.nodeInfoMap {
+		deltaList[i] = node
+		i++
 	}
 	if data.baseData == nil {
-		data.completeNodeInfoList = data.nodeInfoList
-		return
+		return deltaList
 	}
 	baseList := data.baseData.GetNodeInfoList()
-	totalLen := len(baseList) + len(data.nodeInfoList)
-	data.completeNodeInfoList = make([]*schedulernodeinfo.NodeInfo, totalLen, totalLen+100)
+	totalLen := len(baseList) + len(deltaList)
+	nodeInfoList := make([]*schedulernodeinfo.NodeInfo, totalLen, totalLen+100)
 	if len(data.deletedNodeInfos) > 0 {
 		// Oops. Costly.
 		i := 0
@@ -110,15 +106,15 @@ func (data *internalDeltaSnapshotData) buildNodeInfoList() {
 			if data.deletedNodeInfos[bni.Node().Name] {
 				continue
 			}
-			data.completeNodeInfoList[i] = bni
+			nodeInfoList[i] = bni
 			i++
 		}
-		data.completeNodeInfoList = data.completeNodeInfoList[:i]
+		nodeInfoList = nodeInfoList[:i]
 	} else {
-		copy(data.completeNodeInfoList, baseList)
+		copy(nodeInfoList, baseList)
 	}
-	copy(data.completeNodeInfoList[len(baseList):], data.nodeInfoList)
-	return
+	copy(nodeInfoList[len(baseList):], deltaList)
+	return nodeInfoList
 }
 
 func (data *internalDeltaSnapshotDataNodeLister) List() ([]*schedulernodeinfo.NodeInfo, error) {
@@ -130,14 +126,11 @@ func (data *internalDeltaSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 		return data.havePodsWithAffinity, nil
 	}
 
-	if data.completeNodeInfoList == nil {
-		(*internalDeltaSnapshotData)(data).buildNodeInfoList()
-	}
-
-	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, len(data.completeNodeInfoList), len(data.completeNodeInfoList))
+	nodeInfoList := (*internalDeltaSnapshotData)(data).GetNodeInfoList()
+	havePodsWithAffinityList := make([]*schedulernodeinfo.NodeInfo, len(nodeInfoList), len(nodeInfoList))
 	// i is index in *output* list.
 	i := 0
-	for _, node := range data.completeNodeInfoList {
+	for _, node := range nodeInfoList {
 		if len(node.PodsWithAffinity()) > 0 {
 			havePodsWithAffinityList[i] = node
 			i++
@@ -234,15 +227,11 @@ func (data *internalDeltaSnapshotData) addNodeInfo(nodeInfo *schedulernodeinfo.N
 	if data.nodeInfoList != nil {
 		data.nodeInfoList = append(data.nodeInfoList, nodeInfo)
 	}
-	if data.completeNodeInfoList != nil {
-		data.completeNodeInfoList = append(data.completeNodeInfoList, nodeInfo)
-	}
 	return nil
 }
 
 func (data *internalDeltaSnapshotData) clearCaches() {
 	data.nodeInfoList = nil
-	data.completeNodeInfoList = nil
 	data.clearPodCaches()
 }
 
