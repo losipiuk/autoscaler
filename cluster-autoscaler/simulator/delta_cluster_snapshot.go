@@ -137,7 +137,7 @@ func (data *internalDeltaSnapshotDataNodeLister) Get(nodeName string) (*schedule
 
 func (data *internalDeltaSnapshotDataPodLister) List(selector labels.Selector) ([]*apiv1.Pod, error) {
 	if data.podList == nil {
-		(*internalDeltaSnapshotData)(data).buildPodList()
+		data.podList = (*internalDeltaSnapshotData)(data).buildPodList()
 	}
 
 	if selector.Empty() {
@@ -156,7 +156,7 @@ func (data *internalDeltaSnapshotDataPodLister) List(selector labels.Selector) (
 
 func (data *internalDeltaSnapshotDataPodLister) FilteredList(podFilter schedulerlisters.PodFilter, selector labels.Selector) ([]*apiv1.Pod, error) {
 	if data.podList == nil {
-		(*internalDeltaSnapshotData)(data).buildPodList()
+		data.podList = (*internalDeltaSnapshotData)(data).buildPodList()
 	}
 
 	selectedPods := make([]*apiv1.Pod, 0, len(data.podList))
@@ -353,7 +353,7 @@ func (data *internalDeltaSnapshotData) getRawPods() ([][]*apiv1.Pod, int) {
 	return pods, total
 }
 
-func (data *internalDeltaSnapshotData) buildPodList() {
+func (data *internalDeltaSnapshotData) buildPodList() []*apiv1.Pod {
 	pods, total := data.getRawPods()
 	// Squash!
 	podList := make([]*apiv1.Pod, total, total+1000)
@@ -362,12 +362,12 @@ func (data *internalDeltaSnapshotData) buildPodList() {
 		copy(podList[j:], pods[i])
 		j += len(pods[i])
 	}
-	data.podList = podList
+	return podList
 }
 
 func (data *internalDeltaSnapshotData) getAllPods() ([]*apiv1.Pod, error) {
 	if data.podList == nil {
-		data.buildPodList()
+		data.podList = data.buildPodList()
 	}
 	return data.podList, nil
 
