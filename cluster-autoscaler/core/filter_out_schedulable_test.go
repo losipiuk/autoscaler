@@ -113,7 +113,7 @@ func TestFilterOutSchedulableByPacking(t *testing.T) {
 			assert.ElementsMatch(t, stillPendingPods, tt.expectedPendingPods, "pending pods differ")
 
 			// Check if snapshot was correctly modified
-			podsInSnapshot, _ := clusterSnapshot.GetAllPods()
+			podsInSnapshot := clusterSnapshot.GetAllPods()
 			assert.ElementsMatch(t, podsInSnapshot, tt.expectedPodsInSnapshot, "pods in snapshot differ")
 		})
 	}

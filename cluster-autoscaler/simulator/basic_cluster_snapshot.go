@@ -160,26 +160,26 @@ func (data *internalBasicSnapshotData) removePod(namespace string, podName strin
 	return fmt.Errorf("pod %s/%s not in snapshot", namespace, podName)
 }
 
-func (data *internalBasicSnapshotData) getAllPods() ([]*apiv1.Pod, error) {
+func (data *internalBasicSnapshotData) getAllPods() []*apiv1.Pod {
 	var pods []*apiv1.Pod
 	for _, nodeInfo := range data.nodeInfoMap {
 		pods = append(pods, nodeInfo.Pods()...)
 	}
-	return pods, nil
+	return pods
 }
 
-func (data *internalBasicSnapshotData) getAllNodes() ([]*apiv1.Node, error) {
+func (data *internalBasicSnapshotData) getAllNodes() []*apiv1.Node {
 	var nodes []*apiv1.Node
 	for _, nodeInfo := range data.nodeInfoMap {
 		nodes = append(nodes, nodeInfo.Node())
 	}
-	return nodes, nil
+	return nodes
 }
 
 // NewBasicClusterSnapshot creates instances of BasicClusterSnapshot.
 func NewBasicClusterSnapshot() *BasicClusterSnapshot {
 	snapshot := &BasicClusterSnapshot{}
-	_ = snapshot.Clear()
+	snapshot.Clear()
 	return snapshot
 }
 
@@ -229,12 +229,12 @@ func (snapshot *BasicClusterSnapshot) RemovePod(namespace string, podName string
 }
 
 // GetAllPods returns list of all the pods in snapshot
-func (snapshot *BasicClusterSnapshot) GetAllPods() ([]*apiv1.Pod, error) {
+func (snapshot *BasicClusterSnapshot) GetAllPods() []*apiv1.Pod {
 	return snapshot.getInternalData().getAllPods()
 }
 
 // GetAllNodes returns list of ll the nodes in snapshot
-func (snapshot *BasicClusterSnapshot) GetAllNodes() ([]*apiv1.Node, error) {
+func (snapshot *BasicClusterSnapshot) GetAllNodes() []*apiv1.Node {
 	return snapshot.getInternalData().getAllNodes()
 }
 
@@ -266,13 +266,12 @@ func (snapshot *BasicClusterSnapshot) Commit() error {
 }
 
 // Clear reset cluster snapshot to empty, unforked state
-func (snapshot *BasicClusterSnapshot) Clear() error {
+func (snapshot *BasicClusterSnapshot) Clear() {
 	snapshot.baseData = newInternalBasicSnapshotData()
 	snapshot.forkedData = nil
-	return nil
 }
 
 // GetSchedulerLister exposes snapshot state as scheduler's SharedLister.
-func (snapshot *BasicClusterSnapshot) GetSchedulerLister() (schedulerlisters.SharedLister, error) {
-	return snapshot.getInternalData(), nil
+func (snapshot *BasicClusterSnapshot) GetSchedulerLister() schedulerlisters.SharedLister {
+	return snapshot.getInternalData()
 }

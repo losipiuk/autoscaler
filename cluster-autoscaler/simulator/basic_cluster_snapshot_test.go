@@ -122,7 +122,7 @@ func BenchmarkListNodeInfos(b *testing.B) {
 			b.ResetTimer()
 			b.Run(fmt.Sprintf("%s: List() %d", snapshotName, tc), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					lister, _ := clusterSnapshot.GetSchedulerLister()
+					lister := clusterSnapshot.GetSchedulerLister()
 					_, _ = lister.NodeInfos().List()
 				}
 			})
@@ -149,10 +149,7 @@ func BenchmarkAddPods(b *testing.B) {
 			b.Run(fmt.Sprintf("%s: AddPod() 30*%d", snapshotName, tc), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					err = clusterSnapshot.Clear()
-					if err != nil {
-						assert.NoError(b, err)
-					}
+					clusterSnapshot.Clear()
 
 					err = clusterSnapshot.AddNodes(nodes)
 					if err != nil {
@@ -230,10 +227,10 @@ type forkingSnapshot interface {
 	AddNode(*apiv1.Node) error
 	AddNodes([]*apiv1.Node) error
 	AddPod(*apiv1.Pod, string) error
-	GetAllNodes() ([]*apiv1.Node, error)
-	GetAllPods() ([]*apiv1.Pod, error)
-	Clear() error
-	GetSchedulerLister() (schedulerlisters.SharedLister, error)
+	GetAllNodes() []*apiv1.Node
+	GetAllPods() []*apiv1.Pod
+	Clear()
+	GetSchedulerLister() schedulerlisters.SharedLister
 }
 
 func TestFork(t *testing.T) {
@@ -259,12 +256,10 @@ func TestFork(t *testing.T) {
 				for _, node := range extraNodes {
 					_ = clusterSnapshot.AddNode(node)
 				}
-				forkNodes, err := clusterSnapshot.GetAllNodes()
-				assert.NoError(t, err)
+				forkNodes := clusterSnapshot.GetAllNodes()
 				assert.Equal(t, nodeCount+len(extraNodes), len(forkNodes))
 				_ = clusterSnapshot.Revert()
-				baseNodes, err := clusterSnapshot.GetAllNodes()
-				assert.NoError(t, err)
+				baseNodes := clusterSnapshot.GetAllNodes()
 				assert.Equal(t, nodeCount, len(baseNodes))
 			})
 		t.Run(fmt.Sprintf("%s: fork should not affect base data: adding pods", name),
@@ -275,12 +270,10 @@ func TestFork(t *testing.T) {
 				for _, pod := range pods {
 					_ = clusterSnapshot.AddPod(pod, pod.Spec.NodeName)
 				}
-				forkPods, err := clusterSnapshot.GetAllPods()
-				assert.NoError(t, err)
+				forkPods := clusterSnapshot.GetAllPods()
 				assert.Equal(t, len(pods), len(forkPods))
 				_ = clusterSnapshot.Revert()
-				basePods, err := clusterSnapshot.GetAllPods()
-				assert.NoError(t, err)
+				basePods := clusterSnapshot.GetAllPods()
 				assert.Equal(t, 0, len(basePods))
 			})
 	}

@@ -302,21 +302,21 @@ func (data *internalDeltaSnapshotData) buildPodList() []*apiv1.Pod {
 	return podList
 }
 
-func (data *internalDeltaSnapshotData) getAllPods() ([]*apiv1.Pod, error) {
+func (data *internalDeltaSnapshotData) getAllPods() []*apiv1.Pod {
 	if data.podList == nil {
 		data.podList = data.buildPodList()
 	}
-	return data.podList, nil
+	return data.podList
 
 }
 
-func (data *internalDeltaSnapshotData) getAllNodes() ([]*apiv1.Node, error) {
+func (data *internalDeltaSnapshotData) getAllNodes() []*apiv1.Node {
 	nodeInfos := data.getNodeInfoList()
 	nodes := make([]*apiv1.Node, len(nodeInfos), len(nodeInfos))
 	for i, nodeInfo := range nodeInfos {
 		nodes[i] = nodeInfo.Node()
 	}
-	return nodes, nil
+	return nodes
 }
 
 func (data *internalDeltaSnapshotData) fork() *internalDeltaSnapshotData {
@@ -414,7 +414,7 @@ func (data *internalDeltaSnapshotData) NodeInfos() schedulerlisters.NodeInfoList
 // NewDeltaClusterSnapshot creates instances of DeltaClusterSnapshot.
 func NewDeltaClusterSnapshot() *DeltaClusterSnapshot {
 	snapshot := &DeltaClusterSnapshot{}
-	_ = snapshot.Clear()
+	snapshot.Clear()
 	return snapshot
 }
 
@@ -457,12 +457,12 @@ func (snapshot *DeltaClusterSnapshot) RemovePod(namespace string, podName string
 }
 
 // GetAllPods returns list of all the pods in snapshot
-func (snapshot *DeltaClusterSnapshot) GetAllPods() ([]*apiv1.Pod, error) {
+func (snapshot *DeltaClusterSnapshot) GetAllPods() []*apiv1.Pod {
 	return snapshot.data.getAllPods()
 }
 
 // GetAllNodes returns list of all the nodes in snapshot
-func (snapshot *DeltaClusterSnapshot) GetAllNodes() ([]*apiv1.Node, error) {
+func (snapshot *DeltaClusterSnapshot) GetAllNodes() []*apiv1.Node {
 	return snapshot.data.getAllNodes()
 }
 
@@ -497,12 +497,11 @@ func (snapshot *DeltaClusterSnapshot) Commit() error {
 
 // Clear reset cluster snapshot to empty, unforked state
 // Time: O(1)
-func (snapshot *DeltaClusterSnapshot) Clear() error {
+func (snapshot *DeltaClusterSnapshot) Clear() {
 	snapshot.data = newInternalDeltaSnapshotData()
-	return nil
 }
 
 // GetSchedulerLister exposes snapshot state as scheduler's SharedLister.
-func (snapshot *DeltaClusterSnapshot) GetSchedulerLister() (schedulerlisters.SharedLister, error) {
-	return snapshot.data, nil
+func (snapshot *DeltaClusterSnapshot) GetSchedulerLister() schedulerlisters.SharedLister {
+	return snapshot.data
 }

@@ -39,9 +39,9 @@ type ClusterSnapshot interface {
 	AddNodeWithPods(node *apiv1.Node, pods []*apiv1.Pod) error
 
 	// GetAllPods returns list of all the pods in snapshot
-	GetAllPods() ([]*apiv1.Pod, error)
+	GetAllPods() []*apiv1.Pod
 	// GetAllNodes returns list of ll the nodes in snapshot
-	GetAllNodes() ([]*apiv1.Node, error)
+	GetAllNodes() []*apiv1.Node
 
 	// Fork creates a fork of snapshot state. All modifications can later be reverted to moment of forking via Revert()
 	// Forking already forked snapshot is not allowed and will result with an error.
@@ -51,8 +51,8 @@ type ClusterSnapshot interface {
 	// Commit commits changes done after forking.
 	Commit() error
 	// Clear reset cluster snapshot to empty, unforked state
-	Clear() error
+	Clear()
 
 	// GetSchedulerLister exposes snapshot state as scheduler's SharedLister.
-	GetSchedulerLister() (schedulerlisters.SharedLister, error)
+	GetSchedulerLister() schedulerlisters.SharedLister
 }

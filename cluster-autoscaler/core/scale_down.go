@@ -410,18 +410,10 @@ func (sd *ScaleDown) UpdateUnneededNodes(
 	// Only scheduled non expendable pods and pods waiting for lower priority pods preemption can prevent node delete.
 
 	// Extract cluster state from snapshot for initial analysis
-	pods, err := sd.context.ClusterSnapshot.GetAllPods()
-	if err != nil {
-		return errors.ToAutoscalerError(errors.InternalError, err)
-	}
-	allNodes, err := sd.context.ClusterSnapshot.GetAllNodes()
-	if err != nil {
-		return errors.ToAutoscalerError(errors.InternalError, err)
-	}
-	schedulerLister, err := sd.context.ClusterSnapshot.GetSchedulerLister()
-	if err != nil {
-		return errors.ToAutoscalerError(errors.InternalError, err)
-	}
+	pods := sd.context.ClusterSnapshot.GetAllPods()
+	allNodes := sd.context.ClusterSnapshot.GetAllNodes()
+	schedulerLister := sd.context.ClusterSnapshot.GetSchedulerLister()
+
 	allNodeInfos, err := schedulerLister.NodeInfos().List()
 	if err != nil {
 		return errors.ToAutoscalerError(errors.InternalError, err)

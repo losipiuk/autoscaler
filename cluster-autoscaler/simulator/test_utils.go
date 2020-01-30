@@ -36,8 +36,7 @@ func initializeClusterSnapshot(
 
 	var err error
 
-	err = snapshot.Clear()
-	assert.NoError(t, err, "error on ClusterSnapshot.Clear()")
+	snapshot.Clear()
 
 	for _, node := range nodes {
 		err = snapshot.AddNode(node)
