@@ -19,6 +19,7 @@ package simulator
 import (
 	apiv1 "k8s.io/api/core/v1"
 	schedulerlisters "k8s.io/kubernetes/pkg/scheduler/listers"
+	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 )
 
 // ClusterSnapshot is abstraction of cluster state used for predicate simulations.
@@ -40,8 +41,8 @@ type ClusterSnapshot interface {
 
 	// GetAllPods returns list of all the pods in snapshot
 	GetAllPods() []*apiv1.Pod
-	// GetAllNodes returns list of ll the nodes in snapshot
-	GetAllNodes() []*apiv1.Node
+	// GetAllNodes returns list of all the nodes in snapshot
+	GetAllNodes() []*schedulernodeinfo.NodeInfo
 
 	// Fork creates a fork of snapshot state. All modifications can later be reverted to moment of forking via Revert()
 	// Forking already forked snapshot is not allowed and will result with an error.

@@ -168,12 +168,12 @@ func (data *internalBasicSnapshotData) getAllPods() []*apiv1.Pod {
 	return pods
 }
 
-func (data *internalBasicSnapshotData) getAllNodes() []*apiv1.Node {
-	var nodes []*apiv1.Node
-	for _, nodeInfo := range data.nodeInfoMap {
-		nodes = append(nodes, nodeInfo.Node())
+func (data *internalBasicSnapshotData) getAllNodes() []*schedulernodeinfo.NodeInfo {
+	nodeInfoList := make([]*schedulernodeinfo.NodeInfo, 0, len(data.nodeInfoMap))
+	for _, v := range data.nodeInfoMap {
+		nodeInfoList = append(nodeInfoList, v)
 	}
-	return nodes
+	return nodeInfoList
 }
 
 // NewBasicClusterSnapshot creates instances of BasicClusterSnapshot.
@@ -233,8 +233,8 @@ func (snapshot *BasicClusterSnapshot) GetAllPods() []*apiv1.Pod {
 	return snapshot.getInternalData().getAllPods()
 }
 
-// GetAllNodes returns list of ll the nodes in snapshot
-func (snapshot *BasicClusterSnapshot) GetAllNodes() []*apiv1.Node {
+// GetAllNodes returns list of all the nodes in snapshot
+func (snapshot *BasicClusterSnapshot) GetAllNodes() []*schedulernodeinfo.NodeInfo {
 	return snapshot.getInternalData().getAllNodes()
 }
 

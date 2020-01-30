@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	. "k8s.io/autoscaler/cluster-autoscaler/utils/test"
 	schedulerlisters "k8s.io/kubernetes/pkg/scheduler/listers"
+	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 
 	apiv1 "k8s.io/api/core/v1"
 )
@@ -227,7 +228,7 @@ type forkingSnapshot interface {
 	AddNode(*apiv1.Node) error
 	AddNodes([]*apiv1.Node) error
 	AddPod(*apiv1.Pod, string) error
-	GetAllNodes() []*apiv1.Node
+	GetAllNodes() []*schedulernodeinfo.NodeInfo
 	GetAllPods() []*apiv1.Pod
 	Clear()
 	GetSchedulerLister() schedulerlisters.SharedLister

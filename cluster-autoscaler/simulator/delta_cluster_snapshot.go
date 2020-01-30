@@ -34,7 +34,6 @@ import (
 //	list all pods (no filtering) - O(n), cached
 //	list all pods (with filtering) - O(n)
 //	list node infos - O(n), cached
-//	get all nodes - O(n)
 //
 // Watch out for:
 //	node deletions, pod additions & deletions - invalidates cache of current snapshot
@@ -462,8 +461,8 @@ func (snapshot *DeltaClusterSnapshot) GetAllPods() []*apiv1.Pod {
 }
 
 // GetAllNodes returns list of all the nodes in snapshot
-func (snapshot *DeltaClusterSnapshot) GetAllNodes() []*apiv1.Node {
-	return snapshot.data.getAllNodes()
+func (snapshot *DeltaClusterSnapshot) GetAllNodes() []*schedulernodeinfo.NodeInfo {
+	return snapshot.data.getNodeInfoList()
 }
 
 // Fork creates a fork of snapshot state. All modifications can later be reverted to moment of forking via Revert()
