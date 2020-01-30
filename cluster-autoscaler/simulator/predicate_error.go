@@ -31,10 +31,7 @@ const (
 	InternalPredicateError
 )
 
-// PredicateError represents an error during predicate checking.
-type PredicateError *predicateError
-
-type predicateError struct {
+type PredicateError struct {
 	errorType     PredicateErrorType
 	predicateName string
 	errorMessage  string
@@ -45,17 +42,17 @@ type predicateError struct {
 }
 
 // PredicateName return name of predicate which failed.
-func (pe *predicateError) ErrorType() PredicateErrorType {
+func (pe *PredicateError) ErrorType() PredicateErrorType {
 	return pe.errorType
 }
 
 // PredicateName return name of predicate which failed.
-func (pe *predicateError) PredicateName() string {
+func (pe *PredicateError) PredicateName() string {
 	return pe.predicateName
 }
 
 // Message returns error message.
-func (pe *predicateError) Message() string {
+func (pe *PredicateError) Message() string {
 	if pe.errorMessage == "" {
 		return "unknown error"
 	}
@@ -64,7 +61,7 @@ func (pe *predicateError) Message() string {
 
 // VerboseMessage generates verbose error message. Building verbose message may be expensive so number of calls should be
 // limited.
-func (pe *predicateError) VerboseMessage() string {
+func (pe *PredicateError) VerboseMessage() string {
 	return fmt.Sprintf(
 		"%s; predicateName=%s; reasons: %s; debugInfo=%s",
 		pe.Message(),
@@ -74,7 +71,7 @@ func (pe *predicateError) VerboseMessage() string {
 }
 
 // Reasons returns failure reasons from failed predicate as a slice of strings.
-func (pe *predicateError) Reasons() []string {
+func (pe *PredicateError) Reasons() []string {
 	return pe.reasons
 }
 
@@ -85,8 +82,8 @@ func NewPredicateError(
 	errorMessage string,
 	reasons []string,
 	debugInfo func() string,
-) PredicateError {
-	return &predicateError{
+) *PredicateError {
+	return &PredicateError{
 		errorType:     errorType,
 		predicateName: predicateName,
 		errorMessage:  errorMessage,
@@ -97,8 +94,8 @@ func NewPredicateError(
 
 // GenericPredicateError return a generic instance of PredicateError to be used in context where predicate name is not
 // know.
-func GenericPredicateError() PredicateError {
-	return &predicateError{
+func GenericPredicateError() *PredicateError {
+	return &PredicateError{
 		errorType:    NotSchedulablePredicateError,
 		errorMessage: "generic predicate failure",
 	}

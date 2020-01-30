@@ -171,8 +171,18 @@ func (f *Fit) Filter(ctx context.Context, cycleState *framework.CycleState, pod 
 	return nil
 }
 
+var cachedReasons = map[v1.ResourceName]string{}
+
 func getErrReason(rn v1.ResourceName) string {
-	return fmt.Sprintf("Insufficient %v", rn)
+	if cachedReason, found := cachedReasons[rn]; found {
+		return cachedReason
+	}
+	
+	cachedReason := fmt.Sprintf("Insufficient %v", rn)
+	cachedReasons[rn] = cachedReason
+	return cachedReason
+	//return fmt.Sprintf("Insufficient %v", rn)
+	//return "Insufficient resources"
 }
 
 // InsufficientResource describes what kind of resource limit is hit and caused the pod to not fit the node.

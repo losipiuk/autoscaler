@@ -33,6 +33,7 @@ import (
 	scheduler_listers "k8s.io/kubernetes/pkg/scheduler/listers"
 	scheduler_nodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 	scheduler_volumebinder "k8s.io/kubernetes/pkg/scheduler/volumebinder"
+
 	// We need to import provider to initialize default scheduler.
 	"k8s.io/kubernetes/pkg/scheduler/algorithmprovider"
 )
@@ -189,14 +190,8 @@ func (p *SchedulerBasedPredicateChecker) fitsAnyNodeDeprecated(pod *apiv1.Pod, n
 }
 
 func (p *SchedulerBasedPredicateChecker) fitsAnyNode(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod) (string, error) {
-	var nodeInfosList []*scheduler_nodeinfo.NodeInfo
-	schedulerLister, err := clusterSnapshot.GetSchedulerLister()
-	if err != nil {
-		// TODO(scheduler_framework_integration) distinguish from internal error and predicate error
-		klog.Errorf("Error obtaining SharedLister from clusterSnapshot")
-		return "", fmt.Errorf("error obtaining SharedLister from clusterSnapshot")
-	}
-	nodeInfosList, err = schedulerLister.NodeInfos().List()
+	schedulerLister := clusterSnapshot.GetSchedulerLister()
+	nodeInfosList, err := schedulerLister.NodeInfos().List()
 	if err != nil {
 		// TODO(scheduler_framework_integration) distinguish from internal error and predicate error
 		klog.Errorf("Error obtaining nodeInfos from schedulerLister")
@@ -232,14 +227,14 @@ func (p *SchedulerBasedPredicateChecker) fitsAnyNode(clusterSnapshot ClusterSnap
 }
 
 // CheckPredicates checks if the given pod can be placed on the given node.
-func (p *SchedulerBasedPredicateChecker) CheckPredicates(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) PredicateError {
+func (p *SchedulerBasedPredicateChecker) CheckPredicates(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) *PredicateError {
 	if clusterSnapshot != nil {
 		return p.checkPredicates(clusterSnapshot, pod, nodeInfo.Node().Name)
 	}
 	return p.checkPredicatesDeprecated(pod, nodeInfo)
 }
 
-func (p *SchedulerBasedPredicateChecker) checkPredicatesDeprecated(pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) PredicateError {
+func (p *SchedulerBasedPredicateChecker) checkPredicatesDeprecated(pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) *PredicateError {
 	p.delegatingSharedLister.UpdateDelegate(p.informerBasedShardLister)
 	defer p.delegatingSharedLister.ResetDelegate()
 
@@ -276,13 +271,8 @@ func (p *SchedulerBasedPredicateChecker) checkPredicatesDeprecated(pod *apiv1.Po
 	return nil
 }
 
-func (p *SchedulerBasedPredicateChecker) checkPredicates(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeName string) PredicateError {
-	schedulerLister, err := clusterSnapshot.GetSchedulerLister()
-	if err != nil {
-		// // TODO(scheduler_framework_integration) distinguish from internal error and predicate error
-		klog.Errorf("Error obtaining SharedLister from clusterSnapshot ")
-		return GenericPredicateError()
-	}
+func (p *SchedulerBasedPredicateChecker) checkPredicates(clusterSnapshot ClusterSnapshot, pod *apiv1.Pod, nodeName string) *PredicateError {
+	schedulerLister := clusterSnapshot.GetSchedulerLister()
 
 	p.delegatingSharedLister.UpdateDelegate(schedulerLister)
 	defer p.delegatingSharedLister.ResetDelegate()

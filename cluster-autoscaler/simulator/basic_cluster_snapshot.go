@@ -54,6 +54,7 @@ func (data *internalBasicSnapshotDataNodeLister) HavePodsWithAffinityList() ([]*
 			havePodsWithAffinityList = append(havePodsWithAffinityList, v)
 		}
 	}
+
 	return havePodsWithAffinityList, nil
 }
 
@@ -119,6 +120,15 @@ func (data *internalBasicSnapshotData) addNode(node *apiv1.Node) error {
 	return nil
 }
 
+func (data *internalBasicSnapshotData) addNodes(nodes []*apiv1.Node) error {
+	for _, node := range nodes {
+		if err := data.addNode(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (data *internalBasicSnapshotData) removeNode(nodeName string) error {
 	if _, found := data.nodeInfoMap[nodeName]; !found {
 		return fmt.Errorf("node %s not in snapshot", nodeName)
@@ -150,26 +160,26 @@ func (data *internalBasicSnapshotData) removePod(namespace string, podName strin
 	return fmt.Errorf("pod %s/%s not in snapshot", namespace, podName)
 }
 
-func (data *internalBasicSnapshotData) getAllPods() ([]*apiv1.Pod, error) {
+func (data *internalBasicSnapshotData) getAllPods() []*apiv1.Pod {
 	var pods []*apiv1.Pod
 	for _, nodeInfo := range data.nodeInfoMap {
 		pods = append(pods, nodeInfo.Pods()...)
 	}
-	return pods, nil
+	return pods
 }
 
-func (data *internalBasicSnapshotData) getAllNodes() ([]*apiv1.Node, error) {
-	var nodes []*apiv1.Node
-	for _, nodeInfo := range data.nodeInfoMap {
-		nodes = append(nodes, nodeInfo.Node())
+func (data *internalBasicSnapshotData) getAllNodes() []*schedulernodeinfo.NodeInfo {
+	nodeInfoList := make([]*schedulernodeinfo.NodeInfo, 0, len(data.nodeInfoMap))
+	for _, v := range data.nodeInfoMap {
+		nodeInfoList = append(nodeInfoList, v)
 	}
-	return nodes, nil
+	return nodeInfoList
 }
 
 // NewBasicClusterSnapshot creates instances of BasicClusterSnapshot.
 func NewBasicClusterSnapshot() *BasicClusterSnapshot {
 	snapshot := &BasicClusterSnapshot{}
-	_ = snapshot.Clear()
+	snapshot.Clear()
 	return snapshot
 }
 
@@ -183,6 +193,11 @@ func (snapshot *BasicClusterSnapshot) getInternalData() *internalBasicSnapshotDa
 // AddNode adds node to the snapshot.
 func (snapshot *BasicClusterSnapshot) AddNode(node *apiv1.Node) error {
 	return snapshot.getInternalData().addNode(node)
+}
+
+// AddNodes adds nodes in batch to the snapshot.
+func (snapshot *BasicClusterSnapshot) AddNodes(nodes []*apiv1.Node) error {
+	return snapshot.getInternalData().addNodes(nodes)
 }
 
 // AddNodeWithPods adds a node and set of pods to be scheduled to this node to the snapshot.
@@ -214,12 +229,12 @@ func (snapshot *BasicClusterSnapshot) RemovePod(namespace string, podName string
 }
 
 // GetAllPods returns list of all the pods in snapshot
-func (snapshot *BasicClusterSnapshot) GetAllPods() ([]*apiv1.Pod, error) {
+func (snapshot *BasicClusterSnapshot) GetAllPods() []*apiv1.Pod {
 	return snapshot.getInternalData().getAllPods()
 }
 
-// GetAllNodes returns list of ll the nodes in snapshot
-func (snapshot *BasicClusterSnapshot) GetAllNodes() ([]*apiv1.Node, error) {
+// GetAllNodes returns list of all the nodes in snapshot
+func (snapshot *BasicClusterSnapshot) GetAllNodes() []*schedulernodeinfo.NodeInfo {
 	return snapshot.getInternalData().getAllNodes()
 }
 
@@ -251,13 +266,12 @@ func (snapshot *BasicClusterSnapshot) Commit() error {
 }
 
 // Clear reset cluster snapshot to empty, unforked state
-func (snapshot *BasicClusterSnapshot) Clear() error {
+func (snapshot *BasicClusterSnapshot) Clear() {
 	snapshot.baseData = newInternalBasicSnapshotData()
 	snapshot.forkedData = nil
-	return nil
 }
 
 // GetSchedulerLister exposes snapshot state as scheduler's SharedLister.
-func (snapshot *BasicClusterSnapshot) GetSchedulerLister() (schedulerlisters.SharedLister, error) {
-	return snapshot.getInternalData(), nil
+func (snapshot *BasicClusterSnapshot) GetSchedulerLister() schedulerlisters.SharedLister {
+	return snapshot.getInternalData()
 }
