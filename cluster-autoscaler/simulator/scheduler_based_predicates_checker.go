@@ -39,7 +39,8 @@ import (
 // SchedulerBasedPredicateChecker checks whether all required predicates pass for given Pod and Node.
 // The verification is done by calling out to scheduler code.
 type SchedulerBasedPredicateChecker struct {
-	framework              scheduler_framework.Framework
+	fastFramework          scheduler_framework.Framework
+	slowFramework          scheduler_framework.Framework
 	delegatingSharedLister *DelegatingSchedulerSharedLister
 	nodeLister             v1listers.NodeLister
 	podLister              v1listers.PodLister
@@ -76,7 +77,8 @@ func NewSchedulerBasedPredicateChecker(kubeClient kube_client.Interface, stop <-
 	}
 
 	checker := &SchedulerBasedPredicateChecker{
-		framework:              framework,
+		fastFramework:          framework,
+		slowFramework:          nil,
 		delegatingSharedLister: sharedLister,
 	}
 
@@ -106,8 +108,17 @@ func (p *SchedulerBasedPredicateChecker) FitsAnyNode(clusterSnapshot ClusterSnap
 	p.delegatingSharedLister.UpdateDelegate(clusterSnapshot)
 	defer p.delegatingSharedLister.ResetDelegate()
 
+	// try with "fast" framework; if it passes revalidate with "slow" framework.
+	node, err := p.fitsAnyNode(p.fastFramework, nodeInfosList, pod)
+	if err != nil || p.slowFramework == nil {
+		return node, err
+	}
+	return p.fitsAnyNode(p.slowFramework, nodeInfosList, pod)
+}
+
+func (p *SchedulerBasedPredicateChecker) fitsAnyNode(framework scheduler_framework.Framework, nodeInfosList []*scheduler_nodeinfo.NodeInfo, pod *apiv1.Pod) (string, error) {
 	state := scheduler_framework.NewCycleState()
-	preFilterStatus := p.framework.RunPreFilterPlugins(context.TODO(), state, pod)
+	preFilterStatus := framework.RunPreFilterPlugins(context.TODO(), state, pod)
 	if !preFilterStatus.IsSuccess() {
 		return "", fmt.Errorf("error running pre filter plugins for pod %s; %s", pod.Name, preFilterStatus.Message())
 	}
@@ -118,7 +129,7 @@ func (p *SchedulerBasedPredicateChecker) FitsAnyNode(clusterSnapshot ClusterSnap
 			continue
 		}
 
-		filterStatuses := p.framework.RunFilterPlugins(context.TODO(), state, pod, nodeInfo)
+		filterStatuses := framework.RunFilterPlugins(context.TODO(), state, pod, nodeInfo)
 		ok := true
 		for _, filterStatus := range filterStatuses {
 			if !filterStatus.IsSuccess() {
@@ -147,8 +158,17 @@ func (p *SchedulerBasedPredicateChecker) CheckPredicates(clusterSnapshot Cluster
 	p.delegatingSharedLister.UpdateDelegate(clusterSnapshot)
 	defer p.delegatingSharedLister.ResetDelegate()
 
+	// try with "fast" framework; if it passes revalidate with "slow" framework.
+	predicateErr := p.checkPredicates(p.fastFramework, pod, nodeInfo)
+	if predicateErr != nil || p.slowFramework == nil {
+		return predicateErr
+	}
+	return p.checkPredicates(p.slowFramework, pod, nodeInfo)
+}
+
+func (p *SchedulerBasedPredicateChecker) checkPredicates(framework scheduler_framework.Framework, pod *apiv1.Pod, nodeInfo *scheduler_nodeinfo.NodeInfo) *PredicateError {
 	state := scheduler_framework.NewCycleState()
-	preFilterStatus := p.framework.RunPreFilterPlugins(context.TODO(), state, pod)
+	preFilterStatus := framework.RunPreFilterPlugins(context.TODO(), state, pod)
 	if !preFilterStatus.IsSuccess() {
 		return NewPredicateError(
 			InternalPredicateError,
@@ -158,7 +178,7 @@ func (p *SchedulerBasedPredicateChecker) CheckPredicates(clusterSnapshot Cluster
 			emptyString)
 	}
 
-	filterStatuses := p.framework.RunFilterPlugins(context.TODO(), state, pod, nodeInfo)
+	filterStatuses := framework.RunFilterPlugins(context.TODO(), state, pod, nodeInfo)
 	for filterName, filterStatus := range filterStatuses {
 		if !filterStatus.IsSuccess() {
 			if filterStatus.IsUnschedulable() {
